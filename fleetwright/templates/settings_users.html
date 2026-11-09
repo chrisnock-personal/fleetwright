@@ -1,0 +1,42 @@
+{% extends "settings_base.html" %}
+{% block title %}Users · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>Users</h1><p class="lede">Admins change everything, including settings. Operators run updates and edit schedules. Viewers look.</p></div>
+{% if link %}
+<section class="card pad" style="border-color:var(--accent)">
+  <h2>Setup link for {{ link.name }}</h2>
+  <p class="hint">Send it to them; it works once and lasts 72 hours. It's shown only now.</p>
+  <div class="cmd"><code>{{ public_url }}/welcome/{{ link.token }}</code></div>
+</section>
+{% endif %}
+<section class="card panel">
+  <div class="scroll"><table class="people">
+    <thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead>
+    <tbody>
+    {% for p in people %}
+      <tr>
+        <td><div class="person"><span class="avatar" aria-hidden="true">{{ p.name[:1]|upper }}</span><div><strong>{{ p.name }}</strong><small>{{ p.email }}{% if not p.active %} · setup link sent{% endif %}</small></div></div></td>
+        <td><form method="post" action="/settings/users">{{ csrf_field() }}<input type="hidden" name="id" value="{{ p.id }}"><input type="hidden" name="action" value="role">
+          <select name="role" aria-label="Role for {{ p.name }}" onchange="this.form.submit()">{% for k, v in ROLES.items() %}<option value="{{ k }}" {{ 'selected' if p.role == k }}>{{ v }}</option>{% endfor %}</select>
+          <noscript><button class="btn small" type="submit">Save</button></noscript></form></td>
+        <td class="sub">{{ p.last_login|ago }}</td>
+        <td><div class="row-actions">
+          <form method="post" action="/settings/users">{{ csrf_field() }}<input type="hidden" name="id" value="{{ p.id }}"><button class="btn small" name="action" value="link">New setup link</button></form>
+          {% if p.id != current_user.id %}<form method="post" action="/settings/users" data-confirm="Remove {{ p.name }}?">{{ csrf_field() }}<input type="hidden" name="id" value="{{ p.id }}"><button class="btn small danger" name="action" value="delete">Remove</button></form>{% endif %}
+        </div></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+<form class="card pad" method="post" action="/settings/users">
+  {{ csrf_field() }}<input type="hidden" name="action" value="add">
+  <h2>Add someone</h2>
+  <div class="form-grid">
+    <div class="field"><label for="uname">Name</label><input class="input" id="uname" name="name" required></div>
+    <div class="field"><label for="uemail">Email</label><input class="input" id="uemail" name="email" type="email" required></div>
+    <div class="field"><label for="urole">Role</label><select id="urole" name="role">{% for k, v in ROLES.items() %}<option value="{{ k }}" {{ 'selected' if k == 'operator' }}>{{ v }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="actions"><span class="hint">They get a setup link to choose their password.</span><div class="end"><button class="btn primary" type="submit">Add and make a link</button></div></div>
+</form>
+{% endblock %}

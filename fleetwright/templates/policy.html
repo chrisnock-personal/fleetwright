@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% set active = "schedules" %}
+{% block title %}{{ p.name or 'New policy' }} · FleetWright{% endblock %}
+{% block body %}
+{% set sel = p.selection %}
+{% set tgt = p.target %}
+<main style="max-width:1100px">
+  {{ flashes_block() }}
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/schedules">Schedules</a><span aria-hidden="true">/</span><span>{{ p.name or 'New policy' }}</span></nav>
+  <div class="page-head">
+    <div><h1>{{ p.name or 'New auto-install policy' }}</h1>
+      <p>Installs the kinds of update you choose, by itself, in a window that repeats. Times in UTC.</p></div>
+    {% if p.id and can(current_user, 'operator') %}
+    <form class="actions-row" method="post" action="/schedules/policies/{{ p.id }}/action">
+      {{ csrf_field() }}
+      <button class="btn" name="action" value="run_now" type="submit">Run now</button>
+    </form>
+    {% endif %}
+  </div>
+  {% for e in errors %}<div class="flash bad" role="alert">{{ e }}</div>{% endfor %}
+
+  <div class="layout">
+    <form class="card pad wide" method="post" action="/schedules/policies/save" style="gap:20px">
+      {{ csrf_field() }}
+      {% if p.id %}<input type="hidden" name="id" value="{{ p.id }}">{% endif %}
+      <div class="row-head">
+        <div class="field" style="flex:1 1 300px"><label for="name">Name</label><input class="input" id="name" name="name" value="{{ p.name }}" placeholder="Security nightly" required></div>
+        <label class="check" style="margin-top:22px"><input type="checkbox" class="switch" name="enabled" value="1" {{ 'checked' if p.enabled }}> On</label>
+      </div>
+
+      <fieldset class="field">
+        <legend>What it installs</legend>
+        <div class="radios" style="margin-top:6px">
+          <label><input type="radio" name="what" value="kinds" {{ 'checked' if sel.mode != 'all' }}> Chosen kinds of update</label>
+          <label><input type="radio" name="what" value="all" {{ 'checked' if sel.mode == 'all' }}> Everything pending</label>
+        </div>
+      </fieldset>
+      <div class="checks">
+        {% for k in kinds %}
+        <label class="checkbox"><input type="checkbox" name="kinds" value="{{ k }}" {{ 'checked' if k in (sel.kinds or []) }}>{{ KIND_LABELS[k] }}</label>
+        {% endfor %}
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="min_severity">Lowest security severity</label>
+          <select id="min_severity" name="min_severity">
+            <option value="">Any severity</option>
+            {% for s in severities %}<option value="{{ s }}" {{ 'selected' if sel.min_severity == s }}>{{ s|capitalize }}{{ ' and above' if s != 'critical' else ' only' }}</option>{% endfor %}
+          </select>
+          <span class="help">Fedora advisories carry a severity. Ubuntu's package lists don't, so its security updates always count.</span>
+        </div>
+        <div class="field"><label for="include">Also always include</label><input class="input mono" id="include" name="include" value="{{ (sel.include or [])|join(', ') }}" placeholder="openssl*, curl"></div>
+        <div class="field"><label for="exclude">Never install</label><input class="input mono" id="exclude" name="exclude" value="{{ (sel.exclude or [])|join(', ') }}" placeholder="nginx, postgresql-*"><span class="help">On top of each host's own held list.</span></div>
+      </div>
+
+      <fieldset class="field">
+        <legend>Applies to</legend>
+        <label class="check"><input type="checkbox" name="all_hosts" value="1" {{ 'checked' if tgt.all }}> All hosts</label>
+        {% if groups %}
+        <div class="checks" style="margin-top:6px">
+          {% for g in groups %}<label class="checkbox"><input type="checkbox" name="groups" value="{{ g.id }}" {{ 'checked' if g.id in (tgt.groups or []) }}>{{ g.name }}</label>{% endfor %}
+        </div>
+        {% endif %}
+      </fieldset>
+      <div class="form-grid">
+        <div class="field"><label for="tags">Or hosts tagged</label><input class="input" id="tags" name="tags" value="{{ (tgt.tags or [])|join(', ') }}" placeholder="{{ tags[:2]|join(', ') or 'pci' }}"></div>
+        <div class="field"><label for="exclude_tags">Except hosts tagged</label><input class="input" id="exclude_tags" name="exclude_tags" value="{{ (tgt.exclude_tags or [])|join(', ') }}" placeholder="no-auto"></div>
+      </div>
+
+      <fieldset class="field">
+        <legend>Repeats</legend>
+        <div class="radios" style="margin-top:6px">
+          {% for v, t in [("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")] %}
+          <label><input type="radio" name="repeat" value="{{ v }}" {{ 'checked' if p.repeat == v }}> {{ t }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <div class="form-grid">
+        <fieldset class="field wide">
+          <legend>On these days (weekly)</legend>
+          <div class="radios">{% for d in weekdays %}<label><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 in (p.weekdays or []) }}> {{ d }}</label>{% endfor %}</div>
+        </fieldset>
+        <div class="field"><label for="monthday">Day of the month (monthly)</label><input class="input short" id="monthday" name="monthday" value="{{ p.monthday or 1 }}" inputmode="numeric"><span class="help">1 to 28</span></div>
+        <div class="field"><label for="at_time">Window opens (UTC)</label><input class="input short mono" id="at_time" name="at_time" type="time" value="{{ p.at_time.strftime('%H:%M') }}"></div>
+        <div class="field"><label for="window_minutes">Window length</label>
+          <select id="window_minutes" name="window_minutes">{% for m, t in [(30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (180, "3 hours"), (240, "4 hours"), (360, "6 hours"), (480, "8 hours")] %}<option value="{{ m }}" {{ 'selected' if p.window_minutes == m }}>{{ t }}</option>{% endfor %}</select>
+          <span class="help">No new host starts after the window closes.</span></div>
+      </div>
+
+      <div class="form-grid">
+        <div class="field"><label for="batch_mode">Hosts at a time</label>
+          {% set bm = 'count' if p.batch_size else ('percent' if p.batch_percent else 'all') %}
+          <select id="batch_mode" name="batch_mode"><option value="all" {{ 'selected' if bm == 'all' }}>All at once</option><option value="count" {{ 'selected' if bm == 'count' }}>A fixed number</option><option value="percent" {{ 'selected' if bm == 'percent' }}>A percentage (rolling)</option></select></div>
+        <div class="field"><label for="batch_size">Number</label><input class="input short" id="batch_size" name="batch_size" value="{{ p.batch_size or 10 }}" inputmode="numeric"></div>
+        <div class="field"><label for="batch_percent">Percent</label><input class="input short" id="batch_percent" name="batch_percent" value="{{ p.batch_percent or 10 }}" inputmode="numeric"></div>
+        <div class="field"><label for="max_failures">Stop the run after</label><select id="max_failures" name="max_failures">{% for n in [1, 2, 3, 5, 10, 0] %}<option value="{{ n }}" {{ 'selected' if p.max_failures == n }}>{{ (n ~ ' failed host' ~ ('' if n == 1 else 's')) if n else 'Never stop' }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="reboot">Reboot</label><select id="reboot" name="reboot">{% for v, t in REBOOT_CHOICES.items() %}<option value="{{ v }}" {{ 'selected' if p.reboot == v }}>{{ t }}</option>{% endfor %}</select></div>
+      </div>
+      <label class="opt"><input type="checkbox" name="canary" value="1" {{ 'checked' if p.canary }}><span>Canary first<small>Update one host on its own before the rest, and stop if it fails.</small></span></label>
+
+      <div class="actions"><span></span><div class="end"><a class="btn" href="/schedules">Cancel</a>{% if can(current_user, 'operator') %}<button class="btn primary" type="submit">Save policy</button>{% endif %}</div></div>
+    </form>
+
+    <div class="side">
+      <section class="card pad">
+        <h2>If it ran now</h2>
+        <div class="preview">
+          <span>It would install <b>{{ preview.updates|num }} update{{ '' if preview.updates == 1 else 's' }} on {{ preview.affected|num }} host{{ '' if preview.affected == 1 else 's' }}</b></span>
+          <span>{{ preview.hosts|num }} host{{ '' if preview.hosts == 1 else 's' }} match · {{ preview.reboot_hosts }} would likely need a reboot</span>
+        </div>
+        <p class="hint">From each host's last scan, as saved. Save to update it.</p>
+      </section>
+      {% if p.id %}
+      <section class="card panel">
+        <div class="panel-head"><h2>Recent runs</h2></div>
+        {% for r in runs %}
+        <div class="hist"><div><a href="/runs/{{ r.id }}">#{{ r.id }} {{ r.created_at|when }}</a><span class="detail">{{ r.note or '' }}</span></div><span class="badge {{ r.status|tone }}">{{ r.status|label }}</span></div>
+        {% else %}<p class="empty">Not run yet.</p>{% endfor %}
+      </section>
+      {% if can(current_user, 'operator') %}
+      <form method="post" action="/schedules/policies/{{ p.id }}/action" data-confirm="Delete the policy {{ p.name }}?">
+        {{ csrf_field() }}<button class="btn danger" name="action" value="delete" type="submit">Delete policy</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</main>
+{% endblock %}

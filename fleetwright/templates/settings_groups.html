@@ -1,0 +1,35 @@
+{% extends "settings_base.html" %}
+{% block title %}Groups · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>Groups</h1><p class="lede">Each host is in at most one group. Policies, bookings and the overview work by group; tags cut across groups.</p></div>
+<section class="card panel">
+  {% if groups %}
+  <div class="scroll"><table>
+    <thead><tr><th>Group</th><th>Hosts</th><th></th></tr></thead>
+    <tbody>
+    {% for g in groups %}
+      <tr>
+        <td>
+          <form method="post" action="/settings/groups" class="actions-row">{{ csrf_field() }}<input type="hidden" name="id" value="{{ g.id }}">
+            <input class="input" name="name" value="{{ g.name }}" aria-label="Name" style="max-width:220px">
+            <input class="input" name="description" value="{{ g.description }}" aria-label="Description" placeholder="Description" style="max-width:320px">
+            <button class="btn small" type="submit">Save</button></form>
+        </td>
+        <td class="num"><a href="/hosts?group={{ g.id }}">{{ g.hosts }}</a></td>
+        <td><form method="post" action="/settings/groups/{{ g.id }}/delete" data-confirm="Delete the group {{ g.name }}? Its hosts stay, ungrouped.">{{ csrf_field() }}<button class="btn small danger" type="submit">Delete</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty">No groups yet.</p>{% endif %}
+</section>
+<form class="card pad" method="post" action="/settings/groups">
+  {{ csrf_field() }}
+  <h2>Add a group</h2>
+  <div class="form-grid">
+    <div class="field"><label for="gname">Name</label><input class="input" id="gname" name="name" placeholder="web-prod" required></div>
+    <div class="field"><label for="gdesc">Description</label><input class="input" id="gdesc" name="description"></div>
+  </div>
+  <div class="actions"><span></span><div class="end"><button class="btn primary" type="submit">Add group</button></div></div>
+</form>
+{% endblock %}

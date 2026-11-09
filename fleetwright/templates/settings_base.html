@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set active = "settings" %}
+{% block body %}
+<div class="settings-wrap">
+  <nav class="settings-nav" aria-label="Settings">
+    <span class="eyebrow">Settings</span>
+    {% for key, href, text in [("keys", "/settings/keys", "SSH keys"), ("agents", "/settings/agents", "Agents"), ("https", "/settings/https", "HTTPS"), ("groups", "/settings/groups", "Groups"), ("users", "/settings/users", "Users"), ("audit", "/settings/audit", "Audit log")] %}
+    <a href="{{ href }}" {% if section == key %}class="current" aria-current="page"{% endif %}>{{ text }}</a>
+    {% endfor %}
+  </nav>
+  <main class="settings-main">
+    {{ flashes_block() }}
+    {% block settings %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

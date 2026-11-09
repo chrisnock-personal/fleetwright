@@ -1,0 +1,30 @@
+{% extends "auth_base.html" %}
+{% block title %}Welcome · FleetWright{% endblock %}
+{% block card %}
+{% if not person %}
+<div class="card pad">
+  <h1>This link has expired</h1>
+  <p>Setup links last 72 hours and work once. Ask an admin for a new one.</p>
+  <a class="btn" href="/login">Go to sign in</a>
+</div>
+{% else %}
+<form class="card" method="post">
+  {{ csrf_field() }}
+  <div>
+    <h1>Welcome, {{ person.name }}</h1>
+    <p>Choose a password for {{ person.email }}.</p>
+  </div>
+  {% if error %}<div class="flash bad" role="alert">{{ error }}</div>{% endif %}
+  <div class="field">
+    <label for="password">Password</label>
+    <input class="input" id="password" name="password" type="password" autocomplete="new-password" minlength="12" required autofocus>
+    <span class="help">At least 12 characters.</span>
+  </div>
+  <div class="field">
+    <label for="confirm">Password again</label>
+    <input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required>
+  </div>
+  <button type="submit" class="btn primary">Set password and sign in</button>
+</form>
+{% endif %}
+{% endblock %}

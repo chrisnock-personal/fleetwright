@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% set active = "hosts" %}
+{% block title %}{{ h.name }} · FleetWright{% endblock %}
+{% block body %}
+<main>
+  {{ flashes_block() }}
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/hosts">Hosts</a><span aria-hidden="true">/</span>
+    {% if h.group_id %}<a href="/hosts?group={{ h.group_id }}">{{ h.group_name }}</a><span aria-hidden="true">/</span>{% endif %}
+    <span>{{ h.name }}</span>
+  </nav>
+  <div class="page-head">
+    <div>
+      <h1 class="hostname">{{ h.name }}</h1>
+      <div class="meta-line">
+        <span class="mono">{{ h.address }}{% if h.mode == 'ssh' and h.port != 22 %}:{{ h.port }}{% endif %}</span>
+        <span>{{ h.os_pretty or "OS not known yet" }}</span>
+        {% if h.kernel %}<span>kernel {{ h.kernel }}</span>{% endif %}
+        {% if h.mode == 'agent' %}<span class="{{ 'tone-good' if h.agent_connected else 'tone-bad' }}">Agent {{ h.agent_version or '' }} · {{ 'connected' if h.agent_connected else 'offline' }}</span>
+        {% else %}<span>SSH as {{ h.key_user or '?' }} · key {{ h.key_name or 'none' }}</span>{% endif %}
+      </div>
+    </div>
+    {% if can(current_user, 'operator') %}
+    <form class="actions-row" method="post" action="/hosts/{{ h.id }}/action">
+      {{ csrf_field() }}
+      <button type="submit" class="btn" name="action" value="scan">Scan now</button>
+      <button type="submit" class="btn" name="action" value="reboot">Reboot</button>
+      <button type="submit" class="btn" name="action" value="apply_all" {{ 'disabled' if not counts.all }}>Apply all ({{ counts.all }})</button>
+      <button type="submit" class="btn primary" name="action" value="apply_security" {{ 'disabled' if not counts.security }}>Apply security ({{ counts.security }})</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if h.last_error %}<div class="flash bad" role="alert"><div><strong>Last attempt failed.</strong> <span class="mono" style="white-space:pre-wrap">{{ h.last_error }}</span></div></div>{% endif %}
+  {% if active_task %}<div class="flash info"><div><strong>{{ "Running" if active_task.status == "running" else "Queued" }}:</strong> {{ active_task.op }}{% if active_task.title %} for <a href="/runs/{{ active_task.run_id }}?task={{ active_task.id }}">{{ active_task.title }}</a>{% endif %}{% if active_task.detail %} · {{ active_task.detail }}{% endif %}</div></div>{% endif %}
+
+  <div class="kpis small">
+    <div class="card kpi"><span class="label">Pending updates</span><span class="value {{ 'tone-warn' if counts.all }}">{{ counts.all if h.last_scan_at else '—' }}</span><span class="note">{% if new_pkgs %}+{{ new_pkgs }} new packages pulled in{% else %}&nbsp;{% endif %}</span></div>
+    <div class="card kpi"><span class="label">Security</span><span class="value {{ 'tone-bad' if counts.security }}">{{ counts.security if h.last_scan_at else '—' }}</span><span class="note">{{ counts.kernel }} kernel</span></div>
+    <div class="card kpi"><span class="label">Reboot needed</span><span class="value {{ 'tone-info' if h.reboot_required }}">{{ 'Yes' if h.reboot_required else 'No' }}</span><span class="note">{{ 'running ' ~ h.kernel if h.reboot_required and h.kernel else '&nbsp;'|safe }}</span></div>
+    <div class="card kpi"><span class="label">Up since</span><span class="value" style="font-size:22px">{{ h.booted_at|when if h.booted_at else '—' }}</span><span class="note">{{ h.booted_at|ago if h.booted_at else '' }}</span></div>
+    <div class="card kpi"><span class="label">Last scan</span><span class="value" style="font-size:22px">{{ h.last_scan_at|when if h.last_scan_at else 'Never' }}</span><span class="note">{{ 'by the agent' if h.mode == 'agent' else 'over SSH' }}</span></div>
+  </div>
+
+  <div class="layout">
+    <div class="wide">
+      <form class="card panel" method="post" action="/hosts/{{ h.id }}/action">
+        {{ csrf_field() }}
+        <div class="panel-head">
+          <h2>Pending updates</h2>
+          <div class="chips" role="group" aria-label="Show">
+            {% for key, text in [("all", "All"), ("security", "Security"), ("kernel", "Kernel"), ("held", "Held")] %}
+            <a class="chip {{ 'on' if kind == key }}" href="?kind={{ key }}">{{ text }} <b>{{ counts[key] }}</b></a>
+            {% endfor %}
+          </div>
+        </div>
+        {% if pending %}
+        <div class="scroll"><table>
+          <thead><tr>
+            <th style="width:44px">{% if can(current_user, 'operator') %}<input class="cb" type="checkbox" data-check-all="pkg" aria-label="Tick every update shown">{% endif %}</th>
+            <th>Package</th><th>Installed → available</th><th>Type</th><th>Source</th>
+          </tr></thead>
+          <tbody>
+          {% for p in pending %}
+            <tr>
+              <td>{% if can(current_user, 'operator') and not p.held %}<input class="cb" type="checkbox" name="pkg" value="{{ p.name }}|{{ p.arch }}" aria-label="Tick {{ p.name }}">{% endif %}</td>
+              <td class="mono" style="font-size:13px">{{ p.name }}{% if p.arch not in ('', 'all', 'noarch', 'amd64', 'x86_64') %}<span class="tone-muted">:{{ p.arch }}</span>{% endif %}</td>
+              <td><span class="ver">{{ p.current }} → <b>{{ p.available }}</b></span></td>
+              <td><div class="tagset">
+                {% if p.is_security %}<span class="badge bad">Security</span>{% endif %}
+                {% if p.severity in ('critical', 'important') %}<span class="badge bad">{{ p.severity|capitalize }}</span>{% elif p.severity %}<span class="badge muted">{{ p.severity|capitalize }}</span>{% endif %}
+                {% if p.is_kernel %}<span class="badge info">Kernel</span>{% endif %}
+                {% if p.held %}<span class="badge muted">Held</span>{% endif %}
+                {% if not p.is_security and not p.is_kernel and not p.held %}<span class="badge muted">{{ 'Enhancement' if p.kind == 'enhancement' else 'Bug fix' }}</span>{% endif %}
+              </div></td>
+              <td class="sub nowrap mono" style="font-size:12px">{{ p.advisory or p.source }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        {% if can(current_user, 'operator') %}
+        <div class="foot">
+          <label class="actions-row">Reboot afterwards
+            <select name="reboot"><option value="never">Never</option><option value="if_needed">If needed</option><option value="always">Always</option></select>
+          </label>
+          <div class="actions-row">
+            <button type="submit" class="btn small" name="action" value="schedule_selected">Schedule ticked…</button>
+            <button type="submit" class="btn small primary" name="action" value="apply_selected">Apply ticked now</button>
+          </div>
+        </div>
+        {% endif %}
+        {% elif h.last_scan_at %}<p class="empty">Nothing {{ 'of this kind ' if kind != 'all' }}to install. Up to date as of {{ h.last_scan_at|when }}.</p>
+        {% else %}<p class="empty">Not scanned yet.</p>{% endif %}
+      </form>
+
+      <section class="card panel">
+        <div class="panel-head"><h2>Package changes</h2><span class="hint">last {{ changes|length }}</span></div>
+        {% if changes %}
+        <div class="scroll"><table>
+          <thead><tr><th>When</th><th>Package</th><th>From → to</th></tr></thead>
+          <tbody>
+          {% for c in changes %}
+            <tr><td class="sub nowrap">{{ c.at|when }}</td><td class="mono" style="font-size:13px">{{ c.name }}</td>
+              <td><span class="ver">{{ c.from_version or 'new' }} → <b>{{ c.to_version or 'removed' }}</b></span></td></tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        {% else %}<p class="empty">FleetWright hasn't changed anything here yet.</p>{% endif %}
+      </section>
+    </div>
+
+    <div class="side">
+      <section class="card panel">
+        <div class="panel-head"><h2>Host</h2></div>
+        <div class="facts pad">
+          <div>Group<b>{{ h.group_name or '—' }}</b></div>
+          <div>Tags<b>{{ h.tags|join(', ') or '—' }}</b></div>
+          <div>Connection<b>{{ 'Agent (outbound WebSocket)' if h.mode == 'agent' else 'SSH, port ' ~ h.port }}</b></div>
+          <div>Package manager<b>{{ h.pkg_family or '—' }}</b></div>
+          <div>Held (never installed)<b class="mono">{{ h.held|join(', ') or '—' }}</b></div>
+          <div>Auto-install policies<b>{% for p in policies %}<a href="/schedules/policies/{{ p.id }}">{{ p.name }}</a>{{ '' if p.enabled else ' (off)' }}{{ ', ' if not loop.last }}{% else %}none{% endfor %}</b></div>
+          {% if h.mode == 'ssh' %}<div>Pinned host key<b class="mono">{{ (h.ssh_host_key or 'not yet')[:40] }}{{ '…' if h.ssh_host_key }}</b></div>{% endif %}
+          <div>Added<b>{{ h.created_at|when }}</b></div>
+        </div>
+        {% if can(current_user, 'operator') %}
+        <details class="more" style="padding:0 20px 16px">
+          <summary>Edit</summary>
+          <form method="post" action="/hosts/{{ h.id }}/edit" style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
+            {{ csrf_field() }}
+            <div class="field"><label for="hname">Name</label><input class="input mono" id="hname" name="name" value="{{ h.name }}"></div>
+            {% if h.mode == 'ssh' %}
+            <div class="field"><label for="address">Address</label><input class="input" id="address" name="address" value="{{ h.address }}"></div>
+            <div class="field"><label for="port">Port</label><input class="input short" id="port" name="port" value="{{ h.port }}" inputmode="numeric"></div>
+            <div class="field"><label for="credential_id">SSH key</label><select id="credential_id" name="credential_id">{% for k in keys %}<option value="{{ k.id }}" {{ 'selected' if k.id == h.credential_id }}>{{ k.name }} (as {{ k.username }})</option>{% endfor %}</select></div>
+            {% endif %}
+            <div class="field"><label for="group_id">Group</label><select id="group_id" name="group_id"><option value="">No group</option>{% for g in groups %}<option value="{{ g.id }}" {{ 'selected' if g.id == h.group_id }}>{{ g.name }}</option>{% endfor %}</select></div>
+            <div class="field"><label for="tags">Tags</label><input class="input" id="tags" name="tags" value="{{ h.tags|join(', ') }}"></div>
+            <div class="field"><label for="held">Never install</label><input class="input mono" id="held" name="held" value="{{ h.held|join(', ') }}" placeholder="nginx, postgresql-*"><span class="help">Package names; * matches anything.</span></div>
+            <button type="submit" class="btn primary">Save</button>
+          </form>
+          {% if can(current_user, 'admin') %}
+          <div class="actions-row" style="margin-top:12px">
+            {% if h.mode == 'ssh' and h.ssh_host_key %}
+            <form method="post" action="/hosts/{{ h.id }}/forget-key" class="inline-form">{{ csrf_field() }}<button class="btn small" type="submit">Forget pinned host key</button></form>
+            {% endif %}
+            <form method="post" action="/hosts/{{ h.id }}/delete" class="inline-form" data-confirm="Remove {{ h.name }} and its history?">{{ csrf_field() }}<button class="btn small danger" type="submit">Remove host</button></form>
+          </div>
+          {% endif %}
+        </details>
+        {% endif %}
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head"><h2>History</h2></div>
+        <div>
+          {% for t in history %}
+          <div class="hist">
+            <div>
+              {% if t.run_id %}<a href="/runs/{{ t.run_id }}?task={{ t.id }}">#{{ t.run_id }} {{ t.title }}</a>{% else %}<span style="font-size:14px;font-weight:500">{{ t.op|capitalize }}</span>{% endif %}
+              <span class="detail">{{ (t.finished_at or t.created_at)|when }}{% if t.detail %} · {{ t.detail }}{% endif %}</span>
+            </div>
+            <span class="badge {{ t.status|tone }}">{{ t.status|label }}</span>
+          </div>
+          {% else %}<p class="empty">Nothing yet.</p>{% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+{% endblock %}

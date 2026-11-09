@@ -1,0 +1,46 @@
+{% extends "settings_base.html" %}
+{% block title %}Agents · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>Agents</h1>
+  <p class="lede">The agent is a small Python service that connects out to FleetWright, so hosts need no open port. {{ agents.n }} enrolled, {{ agents.up }} connected. Agents reach this server at <code class="mono">{{ public_url }}</code> (<code class="mono">FLEETWRIGHT_PUBLIC_URL</code>).</p></div>
+{% if new %}
+<section class="card pad" style="border-color:var(--accent)">
+  <h2>Install command for “{{ new.label }}”</h2>
+  <p class="hint">Run this on each host. The token is shown only now.{% if not plain_http %} The command pins this server's certificate, so it can't be served a different install script.{% endif %}</p>
+  <div class="cmd"><code id="cmd">{{ command }}</code></div>
+  {% if plain_http %}<div class="flash bad" role="alert">FleetWright is on plain HTTP, so agents enrolled this way send their token and receive their tasks unprotected (hence <code class="mono">--insecure</code>). Serve it over HTTPS before using agents outside a lab.</div>{% endif %}
+</section>
+{% endif %}
+<section class="card panel">
+  <div class="panel-head"><h2>Enrolment tokens</h2></div>
+  {% if tokens %}
+  <div class="scroll"><table>
+    <thead><tr><th>Token</th><th>New hosts go to</th><th>Uses left</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      {% set live = t.expires_at > t.created_at and (t.uses_left is none or t.uses_left > 0) %}
+      <tr>
+        <td><strong>{{ t.label }}</strong><div class="t-sub plain">by {{ t.created_by }}, {{ t.created_at|when }}</div></td>
+        <td class="sub">{{ t.group_name or 'No group' }}{% if t.tags %} · {{ t.tags|join(', ') }}{% endif %}</td>
+        <td class="num">{{ 'Unlimited' if t.uses_left is none else t.uses_left }}</td>
+        <td class="sub nowrap">{{ t.expires_at|when }}</td>
+        <td><form method="post" action="/settings/agents/{{ t.id }}/revoke">{{ csrf_field() }}<button class="btn small" type="submit">Revoke</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty">No tokens yet.</p>{% endif %}
+</section>
+<form class="card pad" method="post" action="/settings/agents">
+  {{ csrf_field() }}
+  <h2>New enrolment token</h2>
+  <div class="form-grid">
+    <div class="field"><label for="label">Label</label><input class="input" id="label" name="label" placeholder="web-prod rollout"></div>
+    <div class="field"><label for="group_id">Put new hosts in</label><select id="group_id" name="group_id"><option value="">No group</option>{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="tags">Tag them</label><input class="input" id="tags" name="tags" placeholder="eu-west"></div>
+    <div class="field"><label for="uses">Uses</label><input class="input short" id="uses" name="uses" placeholder="unlimited" inputmode="numeric"></div>
+    <div class="field"><label for="days">Valid for (days)</label><input class="input short" id="days" name="days" value="7" inputmode="numeric"></div>
+  </div>
+  <div class="actions"><span></span><div class="end"><button class="btn primary" type="submit">Create token</button></div></div>
+</form>
+{% endblock %}

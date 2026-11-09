@@ -1,0 +1,17 @@
+[Unit]
+Description=FleetWright agent (package updates)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/fleetwright-agent/fleetwright_agent.py run
+Restart=always
+RestartSec=10
+# It installs packages, so it runs as root; keep the rest of the system out of reach.
+PrivateTmp=true
+ProtectHome=read-only
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

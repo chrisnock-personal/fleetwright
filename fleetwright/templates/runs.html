@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set active = "runs" %}
+{% block title %}Runs · FleetWright{% endblock %}
+{% block body %}
+<main>
+  {{ flashes_block() }}
+  <div class="page-head"><div><h1>Runs</h1><p>Every update, reboot and scan run, newest first; running ones on top.</p></div></div>
+  <section class="card panel">
+    {% if runs %}
+    <div class="scroll"><table>
+      <thead><tr><th>Run</th><th>Installs</th><th>Progress</th><th>Started</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr>
+          <td><a class="t-title" href="/runs/{{ r.id }}">#{{ r.id }} {{ r.title }}</a><div class="t-sub plain">{{ r.kind|capitalize }} · {{ r.created_by }}{% if r.note %} · {{ r.note }}{% endif %}</div></td>
+          <td class="sub">{{ describe_selection(r.selection) if r.kind == 'apply' else '—' }}</td>
+          <td style="min-width:170px"><div class="prog"><div class="meter"><i class="{{ 'm-bad' if r.failed else ('m-good' if r.status == 'done' else 'm-info') }}" style="width:{{ (r.finished * 100 / (r.total or 1))|round(1) }}%"></i></div><span>{{ r.finished }} / {{ r.total }}</span></div></td>
+          <td class="sub nowrap">{{ r.created_at|when }}</td>
+          <td class="nowrap"><span class="badge {{ r.status|tone }}">{{ r.status|label }}</span>{% if r.failed %} <span class="badge bad">{{ r.failed }} failed</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="pager"><span>Page {{ page }}</span><nav class="pages" aria-label="Pages">{% if page > 1 %}<a href="?page={{ page - 1 }}">Newer</a>{% endif %}{% if more %}<a href="?page={{ page + 1 }}">Older</a>{% endif %}</nav></div>
+    {% else %}<p class="empty">No runs yet. Start one from a host, the Hosts list or a schedule.</p>{% endif %}
+  </section>
+</main>
+{% endblock %}

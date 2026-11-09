@@ -1,0 +1,47 @@
+<span hidden data-run-status="{{ run.status }}"></span>
+<div class="batches">
+  {% for b in batches %}
+  {% set done_pct = ((b.ok + b.failed + b.skipped) * 100 / (b.n or 1))|round(1) %}
+  <a class="card batch {{ 'cur' if b.batch == batch }}" href="/runs/{{ run.id }}?batch={{ b.batch }}">
+    <div class="row"><strong>{{ batch_label(b.batch) }}</strong>
+      {% if b.running or b.queued %}<span class="badge info">Running</span>
+      {% elif b.waiting == b.n %}<span class="badge muted">Waiting</span>
+      {% elif b.failed %}<span class="badge bad">{{ b.failed }} failed</span>
+      {% elif b.skipped == b.n %}<span class="badge muted">Skipped</span>
+      {% else %}<span class="badge good">Done</span>{% endif %}</div>
+    <div class="meter" aria-hidden="true"><i class="m-good" style="width:{{ (b.ok * 100 / (b.n or 1))|round(1) }}%"></i><i class="m-bad" style="width:{{ (b.failed * 100 / (b.n or 1))|round(1) }}%"></i><i class="m-info" style="width:{{ (b.running * 100 / (b.n or 1))|round(1) }}%"></i></div>
+    <span class="sub">{{ b.ok + b.failed + b.skipped }} / {{ b.n }} host{{ '' if b.n == 1 else 's' }}</span>
+  </a>
+  {% endfor %}
+</div>
+<div class="factline" style="margin-top:20px">
+  <span>Done <b>{{ totals.ok }}</b></span><span>Failed <b class="{{ 'tone-bad' if totals.failed }}">{{ totals.failed }}</b></span>
+  <span>Running <b>{{ totals.running }}</b></span><span>Waiting <b>{{ totals.waiting + totals.queued }}</b></span>
+  {% if totals.skipped %}<span>Skipped <b>{{ totals.skipped }}</b></span>{% endif %}
+  <span>Packages changed <b>{{ pkg_total|num }}</b></span>
+</div>
+<div class="layout" style="margin-top:24px">
+  <section class="card panel run-list">
+    <div class="panel-head"><h2>{{ batch_label(batch) }}</h2><span class="hint">{{ tasks|length }} host{{ '' if tasks|length == 1 else 's' }}</span></div>
+    <div>
+      {% for t in tasks %}
+      <a class="hrow {{ 'sel' if task and t.id == task.id }}" href="/runs/{{ run.id }}?task={{ t.id }}&batch={{ batch }}">
+        <div><span class="n">{{ t.name }}</span><span class="d">{{ t.detail or ('waiting for its batch' if t.status == 'waiting' else ('queued' if t.status == 'queued' else '')) }}{% if t.changed %} · {{ t.changed }} changed{% endif %}</span></div>
+        <span class="badge {{ t.status|tone }}">{{ 'Rebooting' if t.detail == 'rebooting' and t.status == 'running' else t.status|label }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="card panel run-log">
+    {% if task %}
+    <div class="panel-head"><h2 class="mono" style="font-family:var(--mono);font-weight:500;font-size:16px"><a href="/hosts/{{ task.host_id }}" style="color:inherit;text-decoration:none">{{ task.name }}</a></h2>
+      <span class="hint">{{ task.mode }} · {{ 'live output' if task.status == 'running' else task.status|label }}</span></div>
+    <pre class="log" tabindex="0" aria-label="Output from {{ task.name }}">{{ task.log or ('Waiting to start.' if task.status in ('waiting', 'queued') else 'No output.') }}</pre>
+    {% if changes %}
+    <details class="more" style="padding:12px 20px"><summary>{{ changes|length }} package{{ '' if changes|length == 1 else 's' }} changed</summary>
+      <div class="pkgs" style="margin-top:10px">{% for c in changes %}<div class="pkg"><span class="n">{{ c.name }}</span><span class="v">{{ c.from_version or 'new' }} → {{ c.to_version or 'removed' }}</span></div>{% endfor %}</div>
+    </details>
+    {% endif %}
+    {% else %}<p class="empty">No hosts in this run.</p>{% endif %}
+  </section>
+</div>

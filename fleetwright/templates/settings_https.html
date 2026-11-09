@@ -1,0 +1,51 @@
+{% extends "settings_base.html" %}
+{% block title %}HTTPS · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>HTTPS</h1>
+  <p class="lede">FleetWright serves HTTPS on port 8443 with this certificate; port 8080 only redirects to it. Agents check the server's certificate before sending their token.</p></div>
+{% if restarting %}
+<div class="flash ok" role="status"><div><strong>Saved. FleetWright is restarting to serve the new certificate.</strong> The new certificate went to {{ agents }} connected agent{{ '' if agents == 1 else 's' }} first, so they keep connecting. Agents that were offline need re-enrolling (or a certificate their system already trusts). Your browser may warn about the new certificate.</div></div>
+<script>setTimeout(function () { location.href = "/settings/https"; }, 6000);</script>
+{% endif %}
+{% if error %}<div class="flash bad" role="alert">{{ error }}</div>{% endif %}
+{% if not tls_on %}
+<section class="card pad">
+  <h2>HTTPS is off</h2>
+  <p class="hint"><code class="mono">FLEETWRIGHT_TLS=off</code>: FleetWright serves plain HTTP and expects a TLS proxy in front, which should set <code class="mono">X-Forwarded-Proto</code>. Agents are told to use <code class="mono">{{ public_url }}</code>.</p>
+</section>
+{% elif info %}
+<section class="card panel">
+  <div class="panel-head"><h2>Current certificate</h2>{% if info.self_signed %}<span class="badge warn">Self-signed</span>{% else %}<span class="badge good">Signed by {{ info.issuer }}</span>{% endif %}</div>
+  <div class="facts pad">
+    <div>Names<b class="mono">{{ info.names|join(', ') }}</b></div>
+    <div>Subject<b class="mono">{{ info.subject }}</b></div>
+    <div>Expires<b>{{ info.not_after.strftime('%d %b %Y') }}</b></div>
+    <div>SHA-256 fingerprint<b class="mono">{{ info.sha256 }}</b></div>
+    <div>Public-key pin<b class="mono">sha256//{{ info.spki_pin }}</b></div>
+  </div>
+  <p class="hint" style="padding:0 20px 16px">When your browser warns about the self-signed certificate, check that it shows this fingerprint before accepting it.</p>
+</section>
+<form class="card pad" method="post" action="/settings/https" enctype="multipart/form-data">
+  {{ csrf_field() }}
+  <div class="group-head"><h2>Use your own certificate</h2><span class="hint">PEM files. The key must be unencrypted and match the first certificate; put any intermediates after it.</span></div>
+  <div class="form-grid">
+    <div class="field"><label for="cert_file">Certificate and chain</label><input class="input" id="cert_file" name="cert_file" type="file" accept=".pem,.crt,.cer"></div>
+    <div class="field"><label for="key_file">Private key</label><input class="input" id="key_file" name="key_file" type="file" accept=".pem,.key"></div>
+  </div>
+  <details class="more"><summary>Or paste them</summary>
+    <div class="form-grid" style="margin-top:10px">
+      <div class="field"><label for="cert_pem">Certificate and chain</label><textarea class="input key" id="cert_pem" name="cert_pem" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+      <div class="field"><label for="key_pem">Private key</label><textarea class="input key" id="key_pem" name="key_pem" spellcheck="false" autocomplete="off" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
+    </div>
+  </details>
+  <p class="hint">FleetWright checks the pair, keeps the old one, sends the new certificate to connected agents, then restarts. If the new pair won't load at start, the old one comes back.</p>
+  <div class="actions"><span></span><div class="end"><button class="btn primary" type="submit">Check and use it</button></div></div>
+</form>
+<form class="card pad" method="post" action="/settings/https/regenerate" data-confirm="Replace the current certificate with a new self-signed one?">
+  {{ csrf_field() }}
+  <div class="group-head"><h2>New self-signed certificate</h2><span class="hint">For when FleetWright's name or address changes. It always includes the host in FLEETWRIGHT_PUBLIC_URL.</span></div>
+  <div class="field"><label for="names">Extra names and addresses</label><input class="input mono" id="names" name="names" placeholder="fleetwright.lan, 10.0.0.5"></div>
+  <div class="actions"><span></span><div class="end"><button class="btn" type="submit">Generate and use</button></div></div>
+</form>
+{% endif %}
+{% endblock %}

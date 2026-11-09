@@ -1,0 +1,57 @@
+name: fleetwright
+
+services:
+
+  db:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fleetwright}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleetwright}
+      POSTGRES_DB: ${POSTGRES_DB:-fleetwright}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fleetwright}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    image: localhost/fleetwright:latest
+    restart: unless-stopped
+    # One process: the first-run setup code, the sign-in throttle and the
+    # agents' WebSockets live in its memory.
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+    volumes:
+      # The HTTPS certificate and key, kept apart from the database.
+      - certs:/data/certs:Z
+    ports:
+      - "${HTTPS_EXPOSE:-127.0.0.1:8443}:8443"
+      - "${HTTP_EXPOSE:-127.0.0.1:8080}:8080"
+
+  worker:
+    image: localhost/fleetwright:latest
+    restart: unless-stopped
+    command: ["python", "-m", "fleetwright.worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_started
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      FLEETWRIGHT_WORKER_NAME: worker-1
+
+volumes:
+  pgdata:
+    name: ${PGDATA_VOLUME:-fleetwright_pgdata}
+  certs:
+    name: ${CERTS_VOLUME:-fleetwright_certs}

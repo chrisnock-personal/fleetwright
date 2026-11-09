@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% set active = "runs" %}
+{% block title %}Run #{{ run.id }} · FleetWright{% endblock %}
+{% block body %}
+<main>
+  {{ flashes_block() }}
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/runs">Runs</a><span aria-hidden="true">/</span><span>#{{ run.id }}</span></nav>
+  <div class="page-head">
+    <div>
+      <div class="actions-row"><h1>Run #{{ run.id }} · {{ run.title }}</h1>
+        {% if run.status == 'running' %}<span class="live">Running</span>{% else %}<span class="badge {{ run.status|tone }}">{{ run.status|label }}</span>{% endif %}</div>
+      <p class="meta-line">
+        <span>{{ totals.n }} host{{ '' if totals.n == 1 else 's' }}</span>
+        {% if run.kind == 'apply' %}<span>{{ describe_selection(run.selection) }}</span>{% else %}<span>{{ run.kind|capitalize }}</span>{% endif %}
+        {% if run.batch_size %}<span>{{ run.batch_size }} at a time{{ ', canary first' if run.canary }}</span>{% endif %}
+        {% if run.max_failures %}<span>stop after {{ run.max_failures }} failed</span>{% endif %}
+        {% if run.kind == 'apply' %}<span>reboot: {{ REBOOT_CHOICES[run.reboot]|lower }}</span>{% endif %}
+        {% if run.window_end %}<span>window closes {{ run.window_end|when }} UTC</span>{% endif %}
+        <span>{{ target }} · {{ run.created_at|when }}</span>
+      </p>
+      {% if run.note %}<p class="hint {{ 'warn' if run.status != 'done' }}" style="margin-top:6px">{{ run.note }}</p>{% endif %}
+    </div>
+    {% if can(current_user, 'operator') %}
+    <form class="actions-row" method="post" action="/runs/{{ run.id }}/control">
+      {{ csrf_field() }}
+      {% if run.status == 'running' %}<button type="submit" class="btn" name="action" value="pause">Pause after this batch</button>{% endif %}
+      {% if run.status == 'paused' %}<button type="submit" class="btn primary" name="action" value="resume">Resume</button>{% endif %}
+      {% if run.status in ('running', 'paused') %}<button type="submit" class="btn danger" name="action" value="abort">Abort</button>{% endif %}
+      {% if run.status not in ('running', 'paused') and totals.failed %}<button type="submit" class="btn" name="action" value="retry_failed">Retry the {{ totals.failed }} failed</button>{% endif %}
+    </form>
+    {% endif %}
+  </div>
+  <div id="live" data-live="{{ '1' if run.status in ('running', 'paused') else '0' }}" data-src="/runs/{{ run.id }}/live?task={{ task.id if task else '' }}&batch={{ batch }}">
+    {% include "run_live.html" %}
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () {
+    var box = document.getElementById("live");
+    if (!box || box.dataset.live !== "1") return;
+    var stick = true;
+    function tick() {
+      var pre = box.querySelector("pre.log");
+      if (pre) stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+      fetch(box.dataset.src, { credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+        box.innerHTML = html;
+        var p = box.querySelector("pre.log");
+        if (p && stick) p.scrollTop = p.scrollHeight;
+        var state = box.querySelector("[data-run-status]");
+        if (state && state.dataset.runStatus !== "running" && state.dataset.runStatus !== "paused") { location.reload(); return; }
+        setTimeout(tick, 2000);
+      }).catch(function () { setTimeout(tick, 5000); });
+    }
+    var p0 = box.querySelector("pre.log"); if (p0) p0.scrollTop = p0.scrollHeight;
+    setTimeout(tick, 2000);
+  })();
+</script>
+{% endblock %}

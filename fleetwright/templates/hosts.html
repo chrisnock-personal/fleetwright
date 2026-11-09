@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% set active = "hosts" %}
+{% block title %}Hosts · FleetWright{% endblock %}
+{% block body %}
+<main>
+  {{ flashes_block() }}
+  <div class="page-head">
+    <div>
+      <h1>Hosts</h1>
+      <p>{{ counts.all|num }} host{{ "" if counts.all == 1 else "s" }}{% if f.q %} matching “{{ f.q }}”{% endif %} · {{ counts.updates|num }} with updates · {{ counts.security|num }} with security updates</p>
+    </div>
+    {% if can(current_user, 'operator') %}
+    <div class="actions-row">
+      {% if can(current_user, 'admin') %}<a class="btn" href="/settings/agents">Enrol agents</a>{% endif %}
+      <a class="btn primary" href="/hosts/new">Add SSH hosts</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <form class="filters" method="get" action="/hosts">
+    <div class="chips" role="group" aria-label="Status">
+      {% for key, (text, _) in filters.items() %}
+      <a class="chip {{ 'on' if status == key else '' }}" href="{{ qs(request, status=key, page=None) }}" {% if status == key %}aria-current="true"{% endif %}>{{ text }} <b>{{ counts[key]|num }}</b></a>
+      {% endfor %}
+    </div>
+    <div class="selects">
+      <input type="hidden" name="status" value="{{ status }}">
+      {% if f.q %}<input type="hidden" name="q" value="{{ f.q }}">{% endif %}
+      <label>Group<select name="group" onchange="this.form.submit()">
+        <option value="">All groups</option><option value="none" {{ 'selected' if f.group == 'none' }}>Ungrouped</option>
+        {% for g in groups %}<option value="{{ g.id }}" {{ 'selected' if f.group == g.id|string }}>{{ g.name }}</option>{% endfor %}
+      </select></label>
+      <label>OS<select name="os" onchange="this.form.submit()">
+        <option value="">Any OS</option>
+        {% for o in oses %}<option {{ 'selected' if f.os == o.os_pretty }}>{{ o.os_pretty }}</option>{% endfor %}
+      </select></label>
+      <label>Connection<select name="mode" onchange="this.form.submit()">
+        <option value="">Agent or SSH</option><option value="agent" {{ 'selected' if f.mode == 'agent' }}>Agent</option><option value="ssh" {{ 'selected' if f.mode == 'ssh' }}>SSH</option>
+      </select></label>
+      <label>Tag<select name="tag" onchange="this.form.submit()">
+        <option value="">Any tag</option>
+        {% for t in tags %}<option {{ 'selected' if f.tag == t.tag }}>{{ t.tag }}</option>{% endfor %}
+      </select></label>
+      <noscript><button class="btn small" type="submit">Filter</button></noscript>
+    </div>
+  </form>
+
+  <form class="card" method="post" action="/hosts/bulk" style="overflow:hidden">
+    {{ csrf_field() }}
+    <input type="hidden" name="back" value="{{ request.url.path }}{{ ('?' ~ request.url.query) if request.url.query else '' }}">
+    {% if can(current_user, 'operator') and hosts %}
+    <div class="bulk">
+      <strong>With the ticked hosts:</strong>
+      <button type="submit" class="btn small" name="action" value="scan">Scan</button>
+      <button type="submit" class="btn small" name="action" value="apply_security">Apply security</button>
+      <button type="submit" class="btn small" name="action" value="apply_all">Apply all</button>
+      <button type="submit" class="btn small" name="action" value="schedule">Schedule…</button>
+      <button type="submit" class="btn small" name="action" value="reboot">Reboot</button>
+      <details class="more">
+        <summary>More</summary>
+        <div class="actions-row" style="margin-top:8px">
+          <input name="tags" placeholder="tag, tag" aria-label="Tags to add">
+          <button type="submit" class="btn small" name="action" value="tag">Add tags</button>
+          <select name="group_id" aria-label="Move to group"><option value="">No group</option>{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select>
+          <button type="submit" class="btn small" name="action" value="group">Move</button>
+          {% if can(current_user, 'admin') %}<button type="submit" class="btn small danger" name="action" value="delete">Remove</button>{% endif %}
+        </div>
+      </details>
+    </div>
+    {% endif %}
+    <div class="scroll">
+      {% if hosts %}
+      <table>
+        <thead><tr>
+          <th style="width:44px"><input class="cb" type="checkbox" data-check-all="host" aria-label="Tick every host on this page"></th>
+          <th>Host</th><th>OS</th><th>Group</th><th>Connection</th><th>Pending</th><th>Reboot</th><th>Last scan</th>
+        </tr></thead>
+        <tbody>
+        {% for h in hosts %}
+          <tr>
+            <td><input class="cb" type="checkbox" name="host" value="{{ h.id }}" aria-label="Tick {{ h.name }}"></td>
+            <td><a class="t-title mono" href="/hosts/{{ h.id }}">{{ h.name }}</a><div class="t-sub">{{ h.address }}{% if h.tags %} · {{ h.tags|join(', ') }}{% endif %}</div></td>
+            <td class="sub nowrap">{{ h.os_pretty or "—" }}</td>
+            <td class="sub nowrap">{{ h.group_name or "—" }}</td>
+            <td class="nowrap">
+              {% if h.mode == 'agent' %}<span class="badge {{ 'good' if h.agent_connected else 'bad' }}">Agent{{ '' if h.agent_connected else ' · offline' }}</span>
+              {% else %}<span class="badge muted">SSH</span>{% endif %}
+            </td>
+            <td class="nowrap num">
+              {% if h.last_scan_at %}{{ h.pending_count|num }}{% if h.security_count %} <span class="badge bad">{{ h.security_count }} security</span>{% endif %}{% else %}<span class="tone-muted">—</span>{% endif %}
+            </td>
+            <td class="nowrap">{% if h.reboot_required %}<span class="badge info">Needed</span>{% else %}<span class="tone-muted">—</span>{% endif %}</td>
+            <td class="sub nowrap">
+              {% if h.last_error %}<span class="tone-bad" title="{{ h.last_error }}">Error · {{ h.last_scan_at|ago }}</span>{% else %}{{ h.last_scan_at|ago }}{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">{% if counts.all %}No hosts match these filters.{% else %}No hosts yet. <a href="/hosts/new">Add SSH hosts</a> or enrol agents.{% endif %}</p>
+      {% endif %}
+    </div>
+    <div class="pager">
+      <span>{% if total %}Showing {{ (page - 1) * per + 1 }}–{{ [page * per, total]|min }} of {{ total|num }}{% else %}None{% endif %}</span>
+      {% if pages > 1 %}
+      <nav class="pages" aria-label="Pages">
+        {% for p in range(1, pages + 1) %}
+          {% if p == 1 or p == pages or (p - page)|abs <= 2 %}
+          <a href="{{ qs(request, page=p) }}" class="{{ 'on' if p == page else '' }}" {% if p == page %}aria-current="page"{% endif %}>{{ p }}</a>
+          {% elif (p - page)|abs == 3 %}<span aria-hidden="true">…</span>{% endif %}
+        {% endfor %}
+      </nav>
+      {% endif %}
+      <span>Per page:
+        {% for n in per_choices %}<a href="{{ qs(request, per=n, page=None) }}" {% if n == per %}aria-current="true" style="font-weight:600;color:var(--text)"{% endif %}>{{ n }}</a> {% endfor %}
+      </span>
+    </div>
+  </form>
+</main>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "settings_base.html" %}
+{% block title %}Audit log · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>Audit log</h1><p class="lede">Who changed what, newest first.</p></div>
+<section class="card panel">
+  <ul class="history">
+    {% for r in rows %}<li><span class="when">{{ r.at|when }}</span><span class="who-col">{{ r.actor }}</span><span class="what">{{ r.what }}</span></li>
+    {% else %}<li><span class="what">Nothing yet.</span></li>{% endfor %}
+  </ul>
+</section>
+{% endblock %}

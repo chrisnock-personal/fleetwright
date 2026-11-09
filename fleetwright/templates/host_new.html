@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% set active = "hosts" %}
+{% block title %}Add SSH hosts · FleetWright{% endblock %}
+{% block body %}
+<main style="max-width:900px">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/hosts">Hosts</a><span aria-hidden="true">/</span><span>Add SSH hosts</span></nav>
+  <div class="page-head"><div><h1>Add SSH hosts</h1>
+    <p>Agentless: FleetWright connects with a stored key and runs its update script with <code class="mono">sudo</code>. For hosts behind NAT, or thousands of them, the agent is the better fit.</p></div></div>
+  {% for e in errors %}<div class="flash bad" role="alert">{{ e }}</div>{% endfor %}
+  {% if not keys %}
+  <div class="flash info"><div><strong>No SSH keys yet.</strong> <a href="/settings/keys">Add or generate one under Settings</a> first.</div></div>
+  {% endif %}
+  <form class="card pad" method="post" action="/hosts/new">
+    {{ csrf_field() }}
+    <div class="field">
+      <label for="hosts">Hosts, one per line</label>
+      <textarea class="input" id="hosts" name="hosts" rows="8" placeholder="web-01 10.0.0.11&#10;web-02 10.0.0.12:2222&#10;db-01.example.com" required>{{ form.get('hosts', '') }}</textarea>
+      <span class="help"><code class="mono">name address[:port]</code>, or just an address (it becomes the name). Lines starting with # are ignored.</span>
+    </div>
+    <div class="form-grid">
+      <div class="field">
+        <label for="credential_id">SSH key</label>
+        <select id="credential_id" name="credential_id" required>
+          {% for k in keys %}<option value="{{ k.id }}" {{ 'selected' if form.get('credential_id') == k.id|string }}>{{ k.name }} (as {{ k.username }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="group_id">Group</label>
+        <select id="group_id" name="group_id">
+          <option value="">No group</option>
+          {% for g in groups %}<option value="{{ g.id }}" {{ 'selected' if form.get('group_id') == g.id|string }}>{{ g.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="tags">Tags</label>
+        <input class="input" id="tags" name="tags" value="{{ form.get('tags', '') }}" placeholder="pci, eu-west">
+      </div>
+    </div>
+    <p class="hint">The first connection pins each host's SSH key; a different key later is refused. The SSH user needs passwordless <code class="mono">sudo</code> (see the README).</p>
+    <div class="actions"><span></span><div class="end"><a class="btn" href="/hosts">Cancel</a><button class="btn primary" type="submit">Add and scan</button></div></div>
+  </form>
+</main>
+{% endblock %}

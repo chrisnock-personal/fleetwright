@@ -1,0 +1,31 @@
+{% extends "auth_base.html" %}
+{% block title %}Set up FleetWright{% endblock %}
+{% block card %}
+<form class="card" method="post" action="/setup">
+  {{ csrf_field() }}
+  <div>
+    <h1>Set up FleetWright</h1>
+    <p>No accounts exist yet. Create the first admin; you can add others afterwards.</p>
+  </div>
+  {% if error %}<div class="flash bad" role="alert">{{ error }}</div>{% endif %}
+  <div class="field">
+    <label for="code">Setup code</label>
+    <input class="input mono" id="code" name="code" autocomplete="off" value="{{ form.get('code', '') }}" required>
+    <span class="help">Printed in the web container's log, for example by <code class="mono">docker compose logs web</code>.</span>
+  </div>
+  <div class="field">
+    <label for="name">Name</label>
+    <input class="input" id="name" name="name" autocomplete="name" value="{{ form.get('name', '') }}" required>
+  </div>
+  <div class="field">
+    <label for="email">Email</label>
+    <input class="input" id="email" name="email" type="email" autocomplete="username" value="{{ form.get('email', '') }}" required>
+  </div>
+  <div class="field">
+    <label for="password">Password</label>
+    <input class="input" id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+    <span class="help">At least 12 characters.</span>
+  </div>
+  <button type="submit" class="btn primary">Create admin account</button>
+</form>
+{% endblock %}

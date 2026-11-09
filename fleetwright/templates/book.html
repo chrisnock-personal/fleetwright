@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set active = "schedules" %}
+{% block title %}Schedule an install · FleetWright{% endblock %}
+{% block body %}
+{% set chosen = hosts|map(attribute='id')|list %}
+<main style="max-width:760px">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/schedules">Schedules</a><span aria-hidden="true">/</span><span>Schedule an install</span></nav>
+  <div class="page-head"><div><h1>Schedule an install</h1><p>Runs once, inside the window you set. Times in UTC.</p></div></div>
+  {% for e in errors %}<div class="flash bad" role="alert">{{ e }}</div>{% endfor %}
+  <form class="card pad" method="post" action="/schedules/book" style="gap:20px">
+    {{ csrf_field() }}
+    <div class="field">
+      <label for="hosts">Hosts</label>
+      <select id="hosts" name="hosts" multiple size="{{ [[all_hosts|length, 4]|max, 8]|min }}">
+        {% for h in all_hosts %}<option value="{{ h.id }}" {{ 'selected' if h.id in chosen }}>{{ h.name }}</option>{% endfor %}
+      </select>
+      <span class="help">Ctrl- or Cmd-click to pick several. {% if chosen %}{{ chosen|length }} picked.{% endif %}</span>
+    </div>
+    <div class="form-grid">
+      {% if groups %}
+      <div class="field"><label for="groups">And whole groups</label>
+        <select id="groups" name="groups" multiple size="{{ [[groups|length, 3]|max, 6]|min }}">{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select></div>
+      {% endif %}
+      <div class="field"><label for="tags">And hosts tagged</label><input class="input" id="tags" name="tags" value="{{ form.get('tags', '') }}" placeholder="pci"></div>
+    </div>
+
+    <fieldset class="field">
+      <legend>What to install</legend>
+      <div class="radios" style="margin-top:6px">
+        {% if pins %}<label><input type="radio" name="what" value="packages" {{ 'checked' if form.what == 'packages' }}> The updates I picked ({{ pin_rows|length }})</label>{% endif %}
+        <label><input type="radio" name="what" value="kinds" {{ 'checked' if form.what == 'kinds' }}> By kind</label>
+        <label><input type="radio" name="what" value="all" {{ 'checked' if form.what == 'all' }}> Everything pending</label>
+      </div>
+    </fieldset>
+    {% if pins %}
+    <div class="pkgs">
+      {% for p in pin_rows %}<div class="pkg"><span class="n">{{ p.name }}</span><span class="v">→ {{ p.version }}</span></div>{% endfor %}
+    </div>
+    <p class="hint" style="margin-top:-12px">Pinned to these versions, so a newer release that lands before the window isn't pulled in; it's skipped and shown in the run.</p>
+    {% endif %}
+    <div class="checks">
+      {% for k in kinds %}<label class="checkbox"><input type="checkbox" name="kinds" value="{{ k }}" {{ 'checked' if k in (form.get('kinds') or []) }}>{{ KIND_LABELS[k] }}</label>{% endfor %}
+    </div>
+    <div class="form-grid">
+      <div class="field"><label for="min_severity">Lowest security severity</label>
+        <select id="min_severity" name="min_severity"><option value="">Any</option>{% for s in severities %}<option value="{{ s }}">{{ s|capitalize }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="exclude">Never install</label><input class="input mono" id="exclude" name="exclude" value="{{ form.get('exclude', '') }}" placeholder="nginx"></div>
+    </div>
+
+    <div class="form-grid">
+      <div class="field"><label for="window_start">Window opens (UTC)</label><input class="input mono" id="window_start" name="window_start" type="datetime-local" value="{{ form.window_start }}" required></div>
+      <div class="field"><label for="window_end">Window closes (UTC)</label><input class="input mono" id="window_end" name="window_end" type="datetime-local" value="{{ form.window_end }}" required></div>
+    </div>
+    <div class="field"><label for="on_window_close">If the window closes mid-run</label>
+      <select id="on_window_close" name="on_window_close">{% for v, t in WINDOW_CLOSE.items() %}<option value="{{ v }}" {{ 'selected' if form.get('on_window_close') == v }}>{{ t }}</option>{% endfor %}</select></div>
+    <div class="form-grid">
+      <div class="field"><label for="batch_size">Hosts at a time</label>
+        <select id="batch_size" name="batch_size">{% for n, t in [(1, "1 (one by one)"), (2, "2"), (5, "5"), (10, "10"), (25, "25"), (0, "All at once")] %}<option value="{{ n }}" {{ 'selected' if form.get('batch_size')|string == n|string }}>{{ t }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="reboot">Reboot</label>
+        <select id="reboot" name="reboot">{% for v, t in REBOOT_CHOICES.items() %}<option value="{{ v }}" {{ 'selected' if form.get('reboot') == v }}>{{ t }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="field"><label for="title">Name (optional)</label><input class="input" id="title" name="title" value="{{ form.get('title', '') }}" placeholder="Made up from what and where"></div>
+    <label class="opt"><input type="checkbox" name="needs_approval" value="1" {{ 'checked' if form.get('needs_approval') }}><span>Needs an admin's approval<small>Stays “Needs approval” until an admin approves it; if nobody has by the time the window opens, it's missed.</small></span></label>
+    <p class="hint">Every install rescans the host first, so anything already installed by then is skipped.</p>
+    <div class="actions"><span></span><div class="end"><a class="btn" href="/schedules">Cancel</a><button class="btn primary" type="submit">Book install</button></div></div>
+  </form>
+</main>
+{% endblock %}

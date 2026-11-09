@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% set active = "schedules" %}
+{% block title %}Schedules · FleetWright{% endblock %}
+{% block body %}
+<main>
+  {{ flashes_block() }}
+  <div class="page-head">
+    <div>
+      <h1>Schedules</h1>
+      <p>{{ on_count }} of {{ policies|length }} auto-install polic{{ 'y' if policies|length == 1 else 'ies' }} on · {{ booked }} one-off install{{ '' if booked == 1 else 's' }} booked · times in UTC</p>
+    </div>
+    {% if can(current_user, 'operator') %}
+    <div class="actions-row">
+      <a class="btn" href="/schedules/policies/new">New policy</a>
+      <a class="btn primary" href="/schedules/book">Schedule an install</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <section class="card panel">
+    <div class="panel-head"><h2>Next 7 days</h2>
+      <div class="legend" style="margin:0"><span><i style="background:var(--info)"></i>Auto-install policy</span><span><i style="background:var(--warn)"></i>One-off install</span></div>
+    </div>
+    <div class="scroll">
+      <div class="week">
+        {% for d in week %}
+        <div class="day">
+          <span class="dn {{ 'today' if loop.first }}">{{ d.date.strftime('%a %d') }}</span>
+          {% for s in d.slots %}
+          <a class="slot {{ s.kind }}" href="{{ s.href }}"><b>{{ s.title }}</b><span>{{ s.at.strftime('%H:%M') }}{% if s.until %}–{{ s.until.strftime('%H:%M') }}{% endif %}</span></a>
+          {% else %}<span class="slot none">—</span>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card panel">
+    <div class="panel-head"><div class="group-head"><h2>Auto-install policies</h2><span class="hint">Install the kinds of update you choose, by themselves, on a schedule, while switched on</span></div></div>
+    {% if policies %}
+    <div class="scroll"><table>
+      <thead><tr><th>On</th><th>Policy</th><th>Installs</th><th>Applies to</th><th>When</th><th>Next</th></tr></thead>
+      <tbody>
+      {% for p in policies %}
+        <tr class="{{ '' if p.enabled else 'off' }}">
+          <td style="width:76px">
+            {% if can(current_user, 'operator') %}
+            <form method="post" action="/schedules/policies/{{ p.id }}/action" class="inline-form">
+              {{ csrf_field() }}<input type="hidden" name="action" value="toggle">
+              <button type="submit" class="switch" aria-pressed="{{ 'true' if p.enabled else 'false' }}" aria-label="{{ p.name }} {{ 'on' if p.enabled else 'off' }}; switch {{ 'off' if p.enabled else 'on' }}"></button>
+            </form>
+            {% else %}<span class="badge {{ 'good' if p.enabled else 'muted' }}">{{ 'On' if p.enabled else 'Off' }}</span>{% endif %}
+          </td>
+          <td><a class="t-title" href="/schedules/policies/{{ p.id }}">{{ p.name }}</a>
+            <div class="t-sub plain">Reboot {{ REBOOT_CHOICES[p.reboot]|lower }}{% if p.batch_size %} · {{ p.batch_size }} at a time{% elif p.batch_percent %} · {{ p.batch_percent }}% at a time{% endif %}{% if p.canary %} · canary first{% endif %}</div></td>
+          <td><div class="tagset">
+            {% if p.selection.mode == 'all' %}<span class="badge warn">Everything</span>
+            {% else %}{% for k in p.selection.kinds or [] %}<span class="badge {{ 'bad' if k == 'security' else ('info' if k == 'kernel' else 'muted') }}">{{ KIND_LABELS[k] }}{% if k == 'security' and p.selection.min_severity %} ({{ p.selection.min_severity }}+){% endif %}</span>{% endfor %}
+            {% for i in p.selection.include or [] %}<span class="badge muted mono">{{ i }}</span>{% endfor %}{% endif %}
+          </div></td>
+          <td class="sub">{{ p.target_text }}</td>
+          <td class="sub">{{ p.when_text }}</td>
+          <td class="sub nowrap">{% if p.enabled and p.next_run_at %}{{ p.next_run_at|when }}<div class="t-sub plain">{{ p.next_run_at|in_ }}</div>{% else %}Off{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="empty">No policies yet. A policy installs, say, security updates every night at 02:00 on the groups you choose.</p>{% endif %}
+  </section>
+
+  <section class="card panel" id="bookings">
+    <div class="panel-head"><div class="group-head"><h2>One-off installs</h2><span class="hint">Booked by hand for a set window; once it closes, nothing new starts</span></div></div>
+    {% if bookings %}
+    <div class="scroll"><table>
+      <thead><tr><th>Window</th><th>Hosts</th><th>Installs</th><th>Booked by</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for b in bookings %}
+        <tr>
+          <td class="nowrap"><span class="t-title">{{ b.window_start.strftime('%a %d %b') }}</span><div class="t-sub">{{ b.window_start.strftime('%H:%M') }}–{{ b.window_end.strftime('%H:%M') }}</div></td>
+          <td class="sub">{{ b.title }}<div class="t-sub plain">{{ b.target_text }}</div></td>
+          <td class="sub">{{ describe_selection(b.selection) }} · reboot {{ REBOOT_CHOICES[b.reboot]|lower }}</td>
+          <td class="sub nowrap">{{ b.created_by }}{% if b.approved_by %}<div class="t-sub plain">approved by {{ b.approved_by }}</div>{% endif %}</td>
+          <td class="nowrap">{% if b.run_id %}<a href="/runs/{{ b.run_id }}" style="text-decoration:none">{% endif %}<span class="badge {{ b.status|tone }}">{{ b.status|label }}</span>{% if b.run_id %}</a>{% endif %}</td>
+          <td class="nowrap">
+            <div class="row-actions">
+            {% if b.status == 'needs_approval' and can(current_user, 'admin') %}
+              <form method="post" action="/schedules/bookings/{{ b.id }}/action">{{ csrf_field() }}<button class="btn small primary" name="action" value="approve">Approve</button></form>
+            {% endif %}
+            {% if b.status in ('booked', 'needs_approval') and can(current_user, 'operator') %}
+              <form method="post" action="/schedules/bookings/{{ b.id }}/action">{{ csrf_field() }}<button class="btn small" name="action" value="cancel">Cancel</button></form>
+            {% endif %}
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="empty">Nothing booked. Tick hosts or updates and choose “Schedule…”, or use “Schedule an install”.</p>{% endif %}
+  </section>
+</main>
+{% endblock %}

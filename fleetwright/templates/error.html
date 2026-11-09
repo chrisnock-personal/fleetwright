@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} · FleetWright{% endblock %}
+{% block page %}
+{% if current_user %}{{ super() }}{% else %}<div class="error-page"><a class="brand" href="/">{{ brand_mark() }}<span>FleetWright</span></a></div>{% endif %}
+{% endblock %}
+{% block body %}
+<div class="error-page">
+  <h1>{{ {404: "Not found", 403: "Not allowed", 400: "That didn't work"}.get(code, "Something went wrong") }}</h1>
+  <p class="lede">{{ message }}</p>
+  <div><a class="btn" href="javascript:history.back()">Go back</a> <a class="btn" href="/">Overview</a></div>
+</div>
+{% endblock %}

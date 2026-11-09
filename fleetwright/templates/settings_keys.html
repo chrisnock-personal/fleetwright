@@ -1,0 +1,45 @@
+{% extends "settings_base.html" %}
+{% block title %}SSH keys · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>SSH keys</h1>
+  <p class="lede">Agentless hosts are reached with one of these. Private keys are stored encrypted with <code class="mono">FLEETWRIGHT_SECRET_KEY</code> and never shown again.</p></div>
+{% if error %}<div class="flash bad" role="alert">{{ error }}</div>{% endif %}
+<section class="card panel">
+  {% if keys %}
+  <div class="scroll"><table>
+    <thead><tr><th>Key</th><th>Connects as</th><th>Hosts</th><th></th></tr></thead>
+    <tbody>
+    {% for k in keys %}
+      <tr>
+        <td><strong>{{ k.name }}</strong><div class="pubkey">{{ k.public_key }}</div></td>
+        <td class="mono nowrap">{{ k.username }}</td>
+        <td class="num">{{ k.hosts }}</td>
+        <td><form method="post" action="/settings/keys/{{ k.id }}/delete" data-confirm="Delete the key {{ k.name }}?">{{ csrf_field() }}<button class="btn small danger" type="submit">Delete</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty">No keys yet.</p>{% endif %}
+</section>
+<form class="card pad" method="post" action="/settings/keys">
+  {{ csrf_field() }}
+  <div class="group-head"><h2>Add a key</h2><span class="hint">Leave the private key empty to generate a new ed25519 key; then add its public key to each host.</span></div>
+  <div class="form-grid">
+    <div class="field"><label for="name">Name</label><input class="input" id="name" name="name" value="{{ form.get('name', '') }}" placeholder="prod-ed25519" required></div>
+    <div class="field"><label for="username">Connects as</label><input class="input mono" id="username" name="username" value="{{ form.get('username', 'fleetwright') }}"><span class="help">Root, or a user with passwordless sudo.</span></div>
+  </div>
+  <div class="field"><label for="private_key">Private key (optional)</label><textarea class="input key" id="private_key" name="private_key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" autocomplete="off" spellcheck="false"></textarea></div>
+  <div class="actions"><span></span><div class="end"><button class="btn primary" type="submit">Save key</button></div></div>
+</form>
+<section class="card pad">
+  <h2>Setting up a host for agentless updates</h2>
+  <p class="hint">As root on the host, with the public key from above:</p>
+  <pre class="log" style="border-radius:10px">useradd -m -s /bin/bash fleetwright
+install -d -m 700 -o fleetwright -g fleetwright ~fleetwright/.ssh
+echo 'ssh-ed25519 AAAA… fleetwright-prod' >> ~fleetwright/.ssh/authorized_keys
+chown fleetwright: ~fleetwright/.ssh/authorized_keys
+echo 'fleetwright ALL=(root) NOPASSWD: /usr/bin/python3' > /etc/sudoers.d/fleetwright
+chmod 440 /etc/sudoers.d/fleetwright</pre>
+  <p class="hint">FleetWright runs <code class="mono">sudo -n python3 -</code> and sends its update script on standard input. Running Python as root is as good as root, so treat this key like a root key.</p>
+</section>
+{% endblock %}
