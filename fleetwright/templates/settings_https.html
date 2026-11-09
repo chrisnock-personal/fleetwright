@@ -2,7 +2,7 @@
 {% block title %}HTTPS · FleetWright{% endblock %}
 {% block settings %}
 <div><h1>HTTPS</h1>
-  <p class="lede">FleetWright serves HTTPS on port 8443 with this certificate; port 8080 only redirects to it. Agents check the server's certificate before sending their token.</p></div>
+  <p class="lede">FleetWright serves its dashboard and agent gateway over HTTPS with this certificate; its plain-HTTP port only redirects here. Agents check the server's certificate before sending their token.</p></div>
 {% if restarting %}
 <div class="flash ok" role="status"><div><strong>Saved. FleetWright is restarting to serve the new certificate.</strong> The new certificate went to {{ agents }} connected agent{{ '' if agents == 1 else 's' }} first, so they keep connecting. Agents that were offline need re-enrolling (or a certificate their system already trusts). Your browser may warn about the new certificate.</div></div>
 <script>setTimeout(function () { location.href = "/settings/https"; }, 6000);</script>
