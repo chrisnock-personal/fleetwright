@@ -134,3 +134,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```
 
 Tested against Ubuntu 24.04 and Fedora 44 cloud images.
+
+## Licence
+
+MIT: see [LICENSE](LICENSE). FleetWright is fully open source.

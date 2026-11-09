@@ -18,7 +18,6 @@ What's outstanding after v1 (2026-11-09), roughly in priority order. Bugs are tr
       kept apart from the data, with a restore procedure.
 - [ ] **Secret-key rotation.** Support a previous `FLEETWRIGHT_SECRET_KEY` so
       stored SSH keys can be re-encrypted under a new one.
-- [ ] **Licence.** Choose one before anyone else uses the code.
 
 ## Features
 
