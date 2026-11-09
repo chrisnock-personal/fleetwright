@@ -72,6 +72,23 @@
       box.dispatchEvent(new Event("selection", { bubbles: true }));
     });
   });
+  // data-show-if="name=value": show a field only while that radio or select has that value.
+  (function () {
+    var deps = document.querySelectorAll("[data-show-if]");
+    if (!deps.length) return;
+    function current(name) {
+      var el = document.querySelector('[name="' + name + '"]:checked') || document.querySelector('select[name="' + name + '"]');
+      return el ? el.value : null;
+    }
+    function update() {
+      deps.forEach(function (d) {
+        var parts = d.dataset.showIf.split("="), v = current(parts[0]);
+        d.hidden = v !== null && v !== parts[1];
+      });
+    }
+    document.addEventListener("change", update);
+    update();
+  })();
   // Buttons that need a confirmation say so with data-confirm.
   document.querySelectorAll("form[data-confirm]").forEach(function (f) {
     f.addEventListener("submit", function (e) { if (!window.confirm(f.dataset.confirm)) e.preventDefault(); });

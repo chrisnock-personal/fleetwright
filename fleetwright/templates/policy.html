@@ -25,7 +25,7 @@
       {% if p.id %}<input type="hidden" name="id" value="{{ p.id }}">{% endif %}
       <div class="row-head">
         <div class="field" style="flex:1 1 300px"><label for="name">Name</label><input class="input" id="name" name="name" value="{{ p.name }}" placeholder="Security nightly" required></div>
-        <label class="check" style="margin-top:22px"><input type="checkbox" class="switch" name="enabled" value="1" {{ 'checked' if p.enabled }}> On</label>
+        <label class="check" style="margin-top:22px"><input type="checkbox" class="switch" name="enabled" value="1" {{ 'checked' if p.enabled }}> Switched on</label>
       </div>
 
       <fieldset class="field">
@@ -35,13 +35,13 @@
           <label><input type="radio" name="what" value="all" {{ 'checked' if sel.mode == 'all' }}> Everything pending</label>
         </div>
       </fieldset>
-      <div class="checks">
+      <div class="checks" data-show-if="what=kinds">
         {% for k in kinds %}
         <label class="checkbox"><input type="checkbox" name="kinds" value="{{ k }}" {{ 'checked' if k in (sel.kinds or []) }}>{{ KIND_LABELS[k] }}</label>
         {% endfor %}
       </div>
       <div class="form-grid">
-        <div class="field">
+        <div class="field" data-show-if="what=kinds">
           <label for="min_severity">Lowest security severity</label>
           <select id="min_severity" name="min_severity">
             <option value="">Any severity</option>
@@ -49,7 +49,7 @@
           </select>
           <span class="help">Fedora advisories carry a severity. Ubuntu's package lists don't, so its security updates always count.</span>
         </div>
-        <div class="field"><label for="include">Also always include</label><input class="input mono" id="include" name="include" value="{{ (sel.include or [])|join(', ') }}" placeholder="openssl*, curl"></div>
+        <div class="field" data-show-if="what=kinds"><label for="include">Also always include</label><input class="input mono" id="include" name="include" value="{{ (sel.include or [])|join(', ') }}" placeholder="openssl*, curl"></div>
         <div class="field"><label for="exclude">Never install</label><input class="input mono" id="exclude" name="exclude" value="{{ (sel.exclude or [])|join(', ') }}" placeholder="nginx, postgresql-*"><span class="help">On top of each host's own held list.</span></div>
       </div>
 
@@ -76,11 +76,11 @@
         </div>
       </fieldset>
       <div class="form-grid">
-        <fieldset class="field wide">
-          <legend>On these days (weekly)</legend>
+        <fieldset class="field wide" data-show-if="repeat=weekly">
+          <legend>On these days</legend>
           <div class="radios">{% for d in weekdays %}<label><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 in (p.weekdays or []) }}> {{ d }}</label>{% endfor %}</div>
         </fieldset>
-        <div class="field"><label for="monthday">Day of the month (monthly)</label><input class="input short" id="monthday" name="monthday" value="{{ p.monthday or 1 }}" inputmode="numeric"><span class="help">1 to 28</span></div>
+        <div class="field" data-show-if="repeat=monthly"><label for="monthday">Day of the month</label><input class="input short" id="monthday" name="monthday" value="{{ p.monthday or 1 }}" inputmode="numeric"><span class="help">1 to 28</span></div>
         <div class="field"><label for="at_time">Window opens (UTC)</label><input class="input short mono" id="at_time" name="at_time" type="time" value="{{ p.at_time.strftime('%H:%M') }}"></div>
         <div class="field"><label for="window_minutes">Window length</label>
           <select id="window_minutes" name="window_minutes">{% for m, t in [(30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (180, "3 hours"), (240, "4 hours"), (360, "6 hours"), (480, "8 hours")] %}<option value="{{ m }}" {{ 'selected' if p.window_minutes == m }}>{{ t }}</option>{% endfor %}</select>
@@ -91,8 +91,8 @@
         <div class="field"><label for="batch_mode">Hosts at a time</label>
           {% set bm = 'count' if p.batch_size else ('percent' if p.batch_percent else 'all') %}
           <select id="batch_mode" name="batch_mode"><option value="all" {{ 'selected' if bm == 'all' }}>All at once</option><option value="count" {{ 'selected' if bm == 'count' }}>A fixed number</option><option value="percent" {{ 'selected' if bm == 'percent' }}>A percentage (rolling)</option></select></div>
-        <div class="field"><label for="batch_size">Number</label><input class="input short" id="batch_size" name="batch_size" value="{{ p.batch_size or 10 }}" inputmode="numeric"></div>
-        <div class="field"><label for="batch_percent">Percent</label><input class="input short" id="batch_percent" name="batch_percent" value="{{ p.batch_percent or 10 }}" inputmode="numeric"></div>
+        <div class="field" data-show-if="batch_mode=count"><label for="batch_size">Hosts per batch</label><input class="input short" id="batch_size" name="batch_size" value="{{ p.batch_size or 10 }}" inputmode="numeric"></div>
+        <div class="field" data-show-if="batch_mode=percent"><label for="batch_percent">Percent per batch</label><input class="input short" id="batch_percent" name="batch_percent" value="{{ p.batch_percent or 10 }}" inputmode="numeric"></div>
         <div class="field"><label for="max_failures">Stop the run after</label><select id="max_failures" name="max_failures">{% for n in [1, 2, 3, 5, 10, 0] %}<option value="{{ n }}" {{ 'selected' if p.max_failures == n }}>{{ (n ~ ' failed host' ~ ('' if n == 1 else 's')) if n else 'Never stop' }}</option>{% endfor %}</select></div>
         <div class="field"><label for="reboot">Reboot</label><select id="reboot" name="reboot">{% for v, t in REBOOT_CHOICES.items() %}<option value="{{ v }}" {{ 'selected' if p.reboot == v }}>{{ t }}</option>{% endfor %}</select></div>
       </div>

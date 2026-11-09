@@ -2,27 +2,31 @@
 {% set active = "schedules" %}
 {% block title %}Schedule an install · FleetWright{% endblock %}
 {% block body %}
-{% set chosen = hosts|map(attribute='id')|list %}
 <main style="max-width:760px">
   <nav class="crumbs" aria-label="Breadcrumb"><a href="/schedules">Schedules</a><span aria-hidden="true">/</span><span>Schedule an install</span></nav>
   <div class="page-head"><div><h1>Schedule an install</h1><p>Runs once, inside the window you set. Times in UTC.</p></div></div>
   {% for e in errors %}<div class="flash bad" role="alert">{{ e }}</div>{% endfor %}
   <form class="card pad" method="post" action="/schedules/book" style="gap:20px">
     {{ csrf_field() }}
-    <div class="field">
-      <label for="hosts">Hosts</label>
-      <select id="hosts" name="hosts" multiple size="{{ [[all_hosts|length, 4]|max, 8]|min }}">
-        {% for h in all_hosts %}<option value="{{ h.id }}" {{ 'selected' if h.id in chosen }}>{{ h.name }}</option>{% endfor %}
-      </select>
-      <span class="help">Ctrl- or Cmd-click to pick several. {% if chosen %}{{ chosen|length }} picked.{% endif %}</span>
-    </div>
-    <div class="form-grid">
-      {% if groups %}
-      <div class="field"><label for="groups">And whole groups</label>
-        <select id="groups" name="groups" multiple size="{{ [[groups|length, 3]|max, 6]|min }}">{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select></div>
+    <fieldset class="field">
+      <legend>Hosts</legend>
+      {% if hosts %}
+      <div class="checks" style="margin-top:6px">
+        {% for h in hosts %}<label class="checkbox mono"><input type="checkbox" name="hosts" value="{{ h.id }}" checked>{{ h.name }}</label>{% endfor %}
+      </div>
+      {% else %}
+      <p class="hint" style="margin-top:4px">To pick individual hosts, tick them on the <a href="/hosts">Hosts</a> page and choose “Schedule…”. Or choose groups or tags here.</p>
       {% endif %}
-      <div class="field"><label for="tags">And hosts tagged</label><input class="input" id="tags" name="tags" value="{{ form.get('tags', '') }}" placeholder="pci"></div>
-    </div>
+    </fieldset>
+    {% if groups %}
+    <fieldset class="field">
+      <legend>{{ 'And whole groups' if hosts else 'Whole groups' }}</legend>
+      <div class="checks" style="margin-top:6px">
+        {% for g in groups %}<label class="checkbox"><input type="checkbox" name="groups" value="{{ g.id }}" {{ 'checked' if g.id|string in (form.get('groups') or []) }}>{{ g.name }}</label>{% endfor %}
+      </div>
+    </fieldset>
+    {% endif %}
+    <div class="field"><label for="tags">{{ 'And hosts tagged' if hosts or groups else 'Hosts tagged' }}</label><input class="input" id="tags" name="tags" value="{{ form.get('tags', '') }}" placeholder="pci, eu-west"></div>
 
     <fieldset class="field">
       <legend>What to install</legend>
@@ -33,16 +37,16 @@
       </div>
     </fieldset>
     {% if pins %}
-    <div class="pkgs">
+    <div class="pkgs" data-show-if="what=packages">
       {% for p in pin_rows %}<div class="pkg"><span class="n">{{ p.name }}</span><span class="v">→ {{ p.version }}</span></div>{% endfor %}
     </div>
-    <p class="hint" style="margin-top:-12px">Pinned to these versions, so a newer release that lands before the window isn't pulled in; it's skipped and shown in the run.</p>
+    <p class="hint" style="margin-top:-12px" data-show-if="what=packages">Pinned to these versions, so a newer release that lands before the window isn't pulled in; it's skipped and shown in the run.</p>
     {% endif %}
-    <div class="checks">
+    <div class="checks" data-show-if="what=kinds">
       {% for k in kinds %}<label class="checkbox"><input type="checkbox" name="kinds" value="{{ k }}" {{ 'checked' if k in (form.get('kinds') or []) }}>{{ KIND_LABELS[k] }}</label>{% endfor %}
     </div>
     <div class="form-grid">
-      <div class="field"><label for="min_severity">Lowest security severity</label>
+      <div class="field" data-show-if="what=kinds"><label for="min_severity">Lowest security severity</label>
         <select id="min_severity" name="min_severity"><option value="">Any</option>{% for s in severities %}<option value="{{ s }}">{{ s|capitalize }}</option>{% endfor %}</select></div>
       <div class="field"><label for="exclude">Never install</label><input class="input mono" id="exclude" name="exclude" value="{{ form.get('exclude', '') }}" placeholder="nginx"></div>
     </div>

@@ -23,7 +23,7 @@ def _week_strip(policies: list[dict], bookings: list[dict]) -> list[dict]:
     for p in policies:
         if not p["enabled"]:
             continue
-        t = start - timedelta(seconds=1)
+        t = datetime.now(timezone.utc)   # what's still to come, not what already ran today
         for _ in range(8):
             t = next_run(p["repeat"], p["at_time"], t, p["weekdays"], p["monthday"])
             if t >= end:
@@ -31,7 +31,8 @@ def _week_strip(policies: list[dict], bookings: list[dict]) -> list[dict]:
             days[(t - start).days]["slots"].append({"kind": "auto", "title": p["name"], "at": t,
                                                     "href": f"/schedules/policies/{p['id']}"})
     for b in bookings:
-        if b["status"] in ("booked", "needs_approval", "started") and start <= b["window_start"] < end:
+        if b["status"] in ("booked", "needs_approval", "started") and b["window_end"] > datetime.now(timezone.utc) \
+                and start <= b["window_start"] < end:
             days[(b["window_start"] - start).days]["slots"].append(
                 {"kind": "once", "title": b["title"], "at": b["window_start"], "until": b["window_end"],
                  "href": f"/runs/{b['run_id']}" if b["run_id"] else "#bookings"})
@@ -243,13 +244,12 @@ async def book_page(request: Request, host: list[int] = Query(default=[]), pinne
 
 async def _book_render(request, hosts, pins, form, errors, status=200):
     groups = await db.fetch("SELECT id, name FROM groups ORDER BY name")
-    all_hosts = await db.fetch("SELECT id, name FROM hosts ORDER BY name LIMIT 2000")
     pin_rows = []
     for hid, pkgs in (pins or {}).items():
         for p in pkgs:
             pin_rows.append(p)
     return render(request, "book.html", hosts=hosts, pins=pins, pin_rows=pin_rows, form=form, errors=errors,
-                  groups=groups, all_hosts=all_hosts, kinds=fleet.KINDS, severities=fleet.SEVERITIES,
+                  groups=groups, kinds=fleet.KINDS, severities=fleet.SEVERITIES,
                   http_status=status)
 
 
@@ -285,6 +285,7 @@ async def book(request: Request):
     if errors:
         hosts = await db.fetch("SELECT id, name FROM hosts WHERE id = ANY(%s) ORDER BY name", host_ids)
         form["kinds"] = as_list(form.get("kinds"))
+        form["groups"] = as_list(form.get("groups"))
         return await _book_render(request, hosts, pins, form, errors, 400)
     title = str(form.get("title", "")).strip() or \
         f"{fleet.describe_selection(selection)} on {await fleet.describe_target(target)}"
