@@ -13,6 +13,11 @@ Built for hundreds to thousands of hosts: Postgres is the job queue, workers
 scale out, agents scan themselves, and updates roll out in batches with a
 canary and a failure limit.
 
+For an illustrated tour of every feature, see the
+[project overview](https://github.com/chrisnock-personal/project-overviews/blob/main/fleetwright/README.md).
+
+![The FleetWright overview: summary tiles, a card per group, recent runs, hosts updated per day and the fleet by operating system](docs/images/hero.png)
+
 ## Quick start
 
 ```bash
