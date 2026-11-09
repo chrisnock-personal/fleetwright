@@ -1,6 +1,7 @@
 # Backlog
 
-What's outstanding after v1 (2026-11-09), roughly in priority order.
+What's outstanding after v1 (2026-11-09), roughly in priority order. Bugs are tracked as
+[GitHub issues](https://github.com/chrisnock-personal/fleetwright/issues), closed by the commit that fixes them.
 
 ## Must do before relying on it
 
