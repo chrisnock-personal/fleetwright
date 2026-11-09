@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -92,6 +93,15 @@ async def http_error(request: Request, exc: HTTPException):
     if request.url.path.startswith(("/api/", "/agent/")):
         return PlainTextResponse(str(exc.detail), status_code=exc.status_code)
     return render(request, "error.html", http_status=exc.status_code, code=exc.status_code, message=exc.detail)
+
+
+@app.exception_handler(RequestValidationError)
+async def bad_request(request: Request, exc: RequestValidationError):
+    """A malformed query string or path gets the normal error page, not FastAPI's JSON."""
+    if request.url.path.startswith(("/api/", "/agent/")):
+        return PlainTextResponse("Bad request", status_code=400)
+    return render(request, "error.html", http_status=400, code=400,
+                  message="Part of that address isn't valid. Go back and try the link again.")
 
 
 @app.get("/healthz")

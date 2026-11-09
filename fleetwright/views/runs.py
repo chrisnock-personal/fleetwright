@@ -73,15 +73,19 @@ def _batch_label(run: dict, batches: list[dict]):
     return label
 
 
+def _int_or_none(value: Optional[str]) -> Optional[int]:
+    return int(value) if value and value.isdigit() else None
+
+
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
-async def run_page(request: Request, run_id: int, task: Optional[int] = None, batch: Optional[int] = None):
-    state = await _run_state(run_id, task, batch)
+async def run_page(request: Request, run_id: int, task: Optional[str] = None, batch: Optional[str] = None):
+    state = await _run_state(run_id, _int_or_none(task), _int_or_none(batch))
     return render(request, "run.html", target=await _target_text(state["run"]), **state)
 
 
 @router.get("/runs/{run_id}/live", response_class=HTMLResponse)
-async def run_live(request: Request, run_id: int, task: Optional[int] = None, batch: Optional[int] = None):
-    state = await _run_state(run_id, task, batch)
+async def run_live(request: Request, run_id: int, task: Optional[str] = None, batch: Optional[str] = None):
+    state = await _run_state(run_id, _int_or_none(task), _int_or_none(batch))
     return render(request, "run_live.html", **state)
 
 
