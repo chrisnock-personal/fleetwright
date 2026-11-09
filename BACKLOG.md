@@ -60,7 +60,5 @@ What's outstanding after v1 (2026-11-09), roughly in priority order. Bugs are tr
 
 ## Docs and publishing
 
-- [ ] Public overview page in `project-overviews/fleetwright/`.
-- [ ] Screenshots for the README.
 - [ ] If the agent is published to PyPI, use the name `fleetwright-agent`
       (`fleetwright` is taken).
