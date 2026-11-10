@@ -3,30 +3,39 @@
 What's outstanding after v1 (2026-11-09), roughly in priority order. Bugs are tracked as
 [GitHub issues](https://github.com/chrisnock-personal/fleetwright/issues), closed by the commit that fixes them.
 
-## Must do before relying on it
 
-- [ ] **Load test.** Run a few hundred simulated agents against one gateway
-      process, and a few hundred SSH hosts in containers. Measure the host
-      page and the policy preview, which loads every pending row for its
-      target into Python. Fix whatever it shows.
-- [ ] **Unattended-upgrades clash.** Ubuntu's `unattended-upgrades` also
-      installs security updates. The change list is a before/after diff, so
-      packages it installs during a FleetWright run are recorded as
-      FleetWright's. Detect it, show it on the host page, and offer to turn
-      it off where FleetWright manages updates. Same for `dnf-automatic`.
-- [ ] **Backups.** `pg_dump` on a schedule, encrypted with `age` to a key
-      kept apart from the data, with a restore procedure.
-- [ ] **Secret-key rotation.** Support a previous `FLEETWRIGHT_SECRET_KEY` so
-      stored SSH keys can be re-encrypted under a new one.
+## Next up (in this order, agreed 2026-11-10)
+
+1. [ ] **Detect `unattended-upgrades` and `dnf-automatic`.** A stock Ubuntu
+       install runs `unattended-upgrades`, which installs security updates by
+       itself. If it runs during a FleetWright run, its changes are recorded
+       as FleetWright's, because the change list is a before/after diff of
+       installed versions. Detect both services in the scan, flag them on the
+       host page (and in the overview's "Needs attention"), and offer to turn
+       them off where FleetWright manages updates. *Small, about half a day;
+       fixes the accuracy of the history on every Ubuntu host.*
+2. [ ] **Load test.** A few hundred simulated agents against one gateway
+       process, and a few hundred SSH targets in containers. Measure the host
+       page and the policy preview, which loads every pending update for its
+       hosts into Python (the first thing likely to slow down). Fix whatever
+       it shows. *About a day plus fixes; needed before trusting it at scale.*
+3. [ ] **Notifications** by email, webhook or ntfy: a run failed, a host is
+       unreachable, a booking needs approval, a critical update appeared.
+       *Without them a failed night-time policy run goes unnoticed until
+       someone opens the dashboard.*
+4. [ ] **Backups and secret-key rotation.** `pg_dump` on a schedule,
+       encrypted with `age` to a key kept apart from the data, with a restore
+       procedure. Support a previous `FLEETWRIGHT_SECRET_KEY` so stored SSH keys
+       can be re-encrypted under a new one. *Closes the last open rows of the
+       security review.*
+5. [ ] **Agent self-update** through the gateway: the agent checks a SHA-256
+       sent over its verified connection before replacing itself. *Matters
+       once there are many agents.*
 
 ## Features
 
-- [ ] **Notifications** (email, webhook, ntfy) when a run fails, a host is
-      unreachable, a booking needs approval, or a critical update appears.
 - [ ] **"As soon as released" policies:** install critical updates within N
       hours of a scan finding them, instead of in a fixed window.
-- [ ] **Agent self-update** through the gateway. The agent checks a SHA-256
-      sent over its verified connection before replacing itself.
 - [ ] **Show OS-level holds** (`apt-mark showhold`, `dnf versionlock`). They
       are already collected by scans but not stored or shown.
 - [ ] **Ubuntu severity.** Fill it in from the USN feed or `pro` data, so a
