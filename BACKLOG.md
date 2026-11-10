@@ -19,7 +19,8 @@ Bugs are issues too, closed by the commit that fixes them.
 - [#14](https://github.com/chrisnock-personal/fleetwright/issues/14) Show Ubuntu phased updates
 - [#15](https://github.com/chrisnock-personal/fleetwright/issues/15) Known host keys when adding SSH hosts
 - [#16](https://github.com/chrisnock-personal/fleetwright/issues/16) A narrower agentless mode
-- [#17](https://github.com/chrisnock-personal/fleetwright/issues/17) REST API
+- [#17](https://github.com/chrisnock-personal/fleetwright/issues/17) Full REST API with the same roles as the UI, for headless use
+- [#28](https://github.com/chrisnock-personal/fleetwright/issues/28) CLI (`fw`) wrapping the API, for the command line and AI agents (needs #17)
 - [#18](https://github.com/chrisnock-personal/fleetwright/issues/18) Snap and Flatpak
 - [#19](https://github.com/chrisnock-personal/fleetwright/issues/19) Test and document Debian, RHEL, Rocky and Alma
 
