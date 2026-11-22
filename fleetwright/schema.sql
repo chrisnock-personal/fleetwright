@@ -91,6 +91,24 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     advisory    TEXT,
     PRIMARY KEY (host_id, name, arch)
 );
+-- The overview's security advisories and critical hosts, without scanning every pending update.
+CREATE INDEX IF NOT EXISTS idx_pending_security ON pending_updates (advisory) WHERE is_security;
+CREATE INDEX IF NOT EXISTS idx_pending_critical ON pending_updates (host_id) WHERE severity = 'critical';
+
+-- Trigram indexes for the hosts page's package search (ILIKE '%…%'), which otherwise
+-- scans every pending update. Optional: skipped where the extension can't be created
+-- (a managed database without it); search still works, just slower on big fleets.
+DO $$ BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm unavailable (%), package search will scan', SQLERRM;
+END $$;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+        CREATE INDEX IF NOT EXISTS idx_pending_name_trgm ON pending_updates USING GIN (name gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_pending_advisory_trgm ON pending_updates USING GIN (advisory gin_trgm_ops);
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS enroll_tokens (
     id          SERIAL PRIMARY KEY,
@@ -188,6 +206,8 @@ CREATE TABLE IF NOT EXISTS package_changes (
 );
 CREATE INDEX IF NOT EXISTS idx_changes_host ON package_changes (host_id, at DESC);
 CREATE INDEX IF NOT EXISTS idx_changes_at ON package_changes (at);
+-- A run's page counts each task's changes; deleting old tasks nulls their task_id.
+CREATE INDEX IF NOT EXISTS idx_changes_task ON package_changes (task_id);
 
 -- One-off installs booked for a window.
 CREATE TABLE IF NOT EXISTS bookings (

@@ -29,8 +29,11 @@ _pool: Optional[AsyncConnectionPool] = None
 async def open_pool(min_size: int = 1, max_size: int = 10) -> AsyncConnectionPool:
     global _pool
     if _pool is None:
+        # jit=off: FleetWright's queries are short, and JIT compiling them cost more than
+        # running them (the load test's package search: 104 ms with JIT, 8 ms without).
         _pool = AsyncConnectionPool(config.DATABASE_URL, min_size=min_size, max_size=max_size,
-                                    kwargs={"row_factory": dict_row, "autocommit": True},
+                                    kwargs={"row_factory": dict_row, "autocommit": True,
+                                            "options": "-c jit=off"},
                                     open=False)
         await _pool.open(wait=True, timeout=60)
     return _pool

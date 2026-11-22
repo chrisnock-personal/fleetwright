@@ -73,20 +73,74 @@ async def preview(target: dict, selection: dict) -> dict:
     host_ids = await fleet.resolve_target(target)
     if not host_ids:
         return {"hosts": 0, "updates": 0, "affected": 0, "reboot_hosts": 0}
+    if selection.get("mode") == "packages":
+        updates, affected, kernel_hosts = await _preview_python(host_ids, selection)
+    else:
+        where, args = selection_sql(selection)
+        row = await db.fetchone(
+            f"""WITH h AS (SELECT id, ARRAY(SELECT {GLOB_RE.format('g')} FROM unnest(held) g) AS held_re
+                           FROM hosts WHERE id = ANY(%s))
+                SELECT COUNT(*) AS updates, COUNT(DISTINCT p.host_id) AS affected,
+                       COUNT(DISTINCT p.host_id) FILTER (WHERE p.is_kernel) AS kernel_hosts
+                  FROM pending_updates p JOIN h ON h.id = p.host_id
+                 WHERE {where}""", host_ids, *args)
+        updates, affected, kernel_hosts = row["updates"], row["affected"], row["kernel_hosts"]
+    already = await db.fetchval("SELECT COUNT(*) FROM hosts WHERE id = ANY(%s) AND reboot_required", host_ids)
+    return {"hosts": len(host_ids), "updates": updates, "affected": affected, "reboot_hosts": kernel_hosts + already}
+
+
+# A glob (as pkgops matches with fnmatch: *, ?, [seq], [!seq]) as an anchored Postgres regex.
+GLOB_RE = (r"""'^' || replace(replace(replace(regexp_replace({0}, '([.+^$(){{}}|\\])', '\\\1', 'g'),
+               '*', '.*'), '?', '.'), '[!', '[^') || '$'""")
+
+
+def selection_sql(selection: dict) -> tuple[str, list]:
+    """The WHERE clause that picks, from pending_updates p joined to h (with h.held_re,
+    the host's held globs as regexes), what pkgops.select would pick for an "all" or
+    "kinds" selection. Used to count; installs still go through pkgops.select."""
+    def any_of(param: str) -> str:
+        # Converted once per query (an uncorrelated subquery), not once per row.
+        return f"p.name ~ ANY(ARRAY(SELECT {GLOB_RE.format('g')} FROM unnest({param}) g))"
+
+    where = ["p.current IS NOT NULL", "(cardinality(h.held_re) = 0 OR NOT p.name ~ ANY(h.held_re))"]
+    args: list = []
+    if selection.get("exclude"):
+        where.append("NOT " + any_of("%s::text[]"))
+        args.append(list(selection["exclude"]))
+    if selection.get("mode", "all") != "all":
+        sev = "COALESCE(array_position(ARRAY['low','moderate','important','critical'], p.severity), 0)"
+        min_sev = pkgops.SEVERITY_ORDER.get((selection.get("min_severity") or "").lower(), 0)
+        kinds = set(selection.get("kinds") or [])
+        take = ["FALSE"]
+        if selection.get("include"):
+            take.append(any_of("%s::text[]"))
+            args.append(list(selection["include"]))
+        if "security" in kinds:
+            take.append(f"(p.is_security AND ({sev} = 0 OR {sev} >= {int(min_sev)}))")
+        if "kernel" in kinds:
+            take.append("p.is_kernel")
+        if "bugfix" in kinds:
+            take.append("(p.kind = 'bugfix' AND NOT p.is_security)")
+        if "enhancement" in kinds:
+            take.append("p.kind = 'enhancement'")
+        where.append("(" + " OR ".join(take) + ")")
+    return " AND ".join(where), args
+
+
+async def _preview_python(host_ids: list[int], selection: dict) -> tuple[int, int, int]:
     rows = await db.fetch("""SELECT p.*, h.held FROM pending_updates p JOIN hosts h ON h.id = p.host_id
                               WHERE p.host_id = ANY(%s)""", host_ids)
     by_host: dict[int, list] = {}
     for r in rows:
         by_host.setdefault(r["host_id"], []).append(r)
     updates = affected = kernel_hosts = 0
-    for hid, pend in by_host.items():
+    for pend in by_host.values():
         chosen, _ = pkgops.select(pend, selection, pend[0]["held"] or [])
         if chosen:
             affected += 1
             updates += len(chosen)
             kernel_hosts += any(p["is_kernel"] for p in chosen)
-    already = await db.fetchval("SELECT COUNT(*) FROM hosts WHERE id = ANY(%s) AND reboot_required", host_ids)
-    return {"hosts": len(host_ids), "updates": updates, "affected": affected, "reboot_hosts": kernel_hosts + already}
+    return updates, affected, kernel_hosts
 
 
 async def _policy_page(request: Request, p: dict, errors: Optional[list] = None, status: int = 200):

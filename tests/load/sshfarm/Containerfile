@@ -1,0 +1,14 @@
+# Many SSH "hosts" in one container: one sshd per port, each with its own FW_SEED,
+# and fake apt tools so pkgops runs for real without touching any package mirror.
+# Build from tests/load: podman build -f sshfarm/Containerfile -t localhost/fw-sshfarm .
+# (root's password is "*" rather than locked "!", or sshd refuses its key logins.)
+FROM docker.io/library/alpine:3.20
+RUN apk add --no-cache openssh-server python3 \
+ && ssh-keygen -A \
+ && printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.1 LTS (load test)"\n' > /etc/os-release \
+ && sed -i 's/^root:[^:]*:/root:*:/' /etc/shadow
+COPY fakepkgs.py sshfarm/fakeapt.py /opt/fake/
+RUN chmod +x /opt/fake/fakeapt.py \
+ && for t in apt-get dpkg-query apt-mark; do ln -s /opt/fake/fakeapt.py /usr/local/bin/$t; done
+COPY sshfarm/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]

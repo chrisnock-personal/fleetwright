@@ -256,10 +256,12 @@ async def overview(request: Request):
                 COUNT(DISTINCT group_id) AS groups,
                 MAX(last_scan_at) AS last_scan
               FROM hosts h"""),
-        db.fetchone("""SELECT COUNT(*) FILTER (WHERE current IS NOT NULL) AS pending,
-                              COUNT(DISTINCT advisory) FILTER (WHERE is_security) AS advisories,
-                              COUNT(DISTINCT host_id) FILTER (WHERE severity = 'critical') AS critical_hosts
-                         FROM pending_updates"""),
+        # hosts.pending_count is kept from each scan; counting pending_updates itself
+        # meant reading every row (83 ms at 377k in the load test).
+        db.fetchone("""SELECT (SELECT COALESCE(SUM(pending_count), 0) FROM hosts) AS pending,
+                              (SELECT COUNT(DISTINCT advisory) FROM pending_updates WHERE is_security) AS advisories,
+                              (SELECT COUNT(DISTINCT host_id) FROM pending_updates
+                                WHERE severity = 'critical') AS critical_hosts"""),
         db.fetchone("""SELECT COUNT(*) AS runs, COUNT(*) FILTER (WHERE status = 'failed'
                               OR (status = 'done' AND note LIKE '%%failed')) AS failed,
                               COUNT(*) FILTER (WHERE status IN ('running', 'paused')) AS active
