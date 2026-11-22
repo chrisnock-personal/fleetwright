@@ -12,7 +12,7 @@
       <tbody>
       {% for r in runs %}
         <tr>
-          <td><a class="t-title" href="/runs/{{ r.id }}">#{{ r.id }} {{ r.title }}</a><div class="t-sub plain">{{ r.kind|capitalize }} · {{ r.created_by }}{% if r.note %} · {{ r.note }}{% endif %}</div></td>
+          <td><a class="t-title" href="/runs/{{ r.id }}">#{{ r.id }} {{ r.title }}</a><div class="t-sub plain">{{ r.kind|label }} · {{ r.created_by }}{% if r.note %} · {{ r.note }}{% endif %}</div></td>
           <td class="sub">{{ describe_selection(r.selection) if r.kind == 'apply' else '—' }}</td>
           <td style="min-width:170px"><div class="prog"><div class="meter"><i class="{{ 'm-bad' if r.failed else ('m-good' if r.status == 'done' else 'm-info') }}" style="width:{{ (r.finished * 100 / (r.total or 1))|round(1) }}%"></i></div><span>{{ r.finished }} / {{ r.total }}</span></div></td>
           <td class="sub nowrap">{{ r.created_at|when }}</td>

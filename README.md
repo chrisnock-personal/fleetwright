@@ -71,6 +71,14 @@ otherwise.
   or specific packages pinned to the version seen when they were picked.
   Each host's own "never install" list always applies. Every install rescans
   first.
+- **Other updaters**: each scan checks whether `unattended-upgrades` (on by
+  default on Ubuntu) or `dnf-automatic` installs updates by itself, since
+  anything it installs during a FleetWright run would be recorded as
+  FleetWright's. Such hosts are flagged on their page and under *Needs
+  attention*, and *Turn off* stops them: on Ubuntu by writing
+  `/etc/apt/apt.conf.d/99fleetwright-no-unattended-upgrades` (delete it to
+  undo), on Fedora with `systemctl disable --now` on the timer (`enable --now`
+  to undo). Agents older than 0.2.0 don't report this; reinstall them.
 
 ## Scheduling
 

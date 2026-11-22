@@ -167,3 +167,43 @@ def test_parse_host_lines():
     assert hosts == [{"name": "web-01", "address": "10.0.0.1", "port": 22},
                      {"name": "10.0.0.2", "address": "10.0.0.2", "port": 2222}]
     assert len(errors) == 2
+
+
+UBUNTU_APT_DUMP = '''APT::Periodic "";
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade "";
+Unattended-Upgrade::Allowed-Origins "";
+Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}";
+Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";
+Unattended-Upgrade::Allowed-Origins:: "${distro_id}ESMApps:${distro_codename}-apps-security";
+Unattended-Upgrade::Allowed-Origins:: "${distro_id}ESM:${distro_codename}-infra-security";
+Unattended-Upgrade::DevRelease "auto";
+'''
+
+
+def test_apt_unattended_upgrades_config():
+    periodic, origins = pkgops.parse_apt_config(UBUNTU_APT_DUMP)
+    assert periodic == "1"
+    assert len(origins) == 4
+    assert pkgops.uu_scope(origins) == "security updates"
+    assert pkgops.uu_scope(origins + ["${distro_id}:${distro_codename}-updates"]) == "security and other updates"
+    assert pkgops.uu_scope(["origin=Debian,codename=${distro_codename},label=Debian-Security"]) == "security updates"
+    assert pkgops.uu_scope(["origin=Debian,codename=${distro_codename}"]) == "security and other updates"
+    # our override file, read after 20auto-upgrades
+    periodic, _ = pkgops.parse_apt_config(UBUNTU_APT_DUMP.replace('Upgrade "1"', 'Upgrade "0"'))
+    assert periodic == "0"
+    assert pkgops.parse_apt_config("") == ("0", [])
+
+
+def test_dnf_automatic_conf():
+    conf = """[commands]
+# Whether updates should be applied when they are available
+apply_updates = yes
+upgrade_type = security   # only security
+[emitters]
+apply_updates = no
+"""
+    assert pkgops.parse_dnf_automatic_conf(conf) == (True, "security")
+    assert pkgops.parse_dnf_automatic_conf("[commands]\napply_updates=False\n") == (False, "default")
+    assert pkgops.parse_dnf_automatic_conf("") == (False, "default")

@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import config, db, gateway, security
+from . import config, db, fleet, gateway, security
 from .views import hosts as hosts_views
 from .views import runs as runs_views
 from .views import schedules as schedule_views
@@ -307,6 +307,12 @@ async def overview(request: Request):
                      (SELECT h.id, h.name, 'Reboot', 'info', 'Reboot needed · running ' || COALESCE(h.kernel, '?')
                              || ' · ', h.last_scan_at, 4
                         FROM hosts h WHERE h.reboot_required LIMIT 3)
+                     UNION ALL
+                     (SELECT h.id, h.name, 'Auto-updating', 'warn',
+                             (SELECT string_agg(a->>'tool', ', ') FROM jsonb_array_elements(h.auto_updates) a
+                               WHERE (a->>'installs')::boolean)
+                             || ' installs updates outside FleetWright · scanned ', h.last_scan_at, 5
+                        FROM hosts h WHERE {fleet.AUTO_UPDATING_SQL} LIMIT 3)
                      ORDER BY rank LIMIT 8"""),
     )
     peak = max([d["hosts"] for d in days] + [1])

@@ -52,6 +52,14 @@ def wants_reboot(policy: str, result: dict) -> bool:
     return policy == "always" or (policy == "if_needed" and bool(result.get("reboot_required")))
 
 
+def scan_detail(op: str, result: dict) -> str:
+    text = f"{result.get('pending_count', 0)} pending"
+    if op == "auto_off":
+        still = [a["tool"] for a in result.get("auto_updates") or [] if a.get("installs")]
+        text = ("Automatic updates off" if not still else f"Still on: {', '.join(still)}") + f", {text}"
+    return text
+
+
 def apply_detail(result: dict) -> str:
     n = len(result.get("changes") or [])
     if not result.get("planned"):
@@ -90,12 +98,12 @@ async def run_ssh_task(task: dict) -> None:
     tlog = TaskLog(task["id"])
     ok, detail, result = False, None, None
     try:
-        if task["op"] == "scan":
-            result = await sshrun.run_pkgops(host, "scan", None, tlog.line)
+        if task["op"] in ("scan", "auto_off"):
+            result = await sshrun.run_pkgops(host, task["op"], None, tlog.line)
             ok = bool(result.get("ok"))
             if ok:
                 await fleet.record_scan(host["id"], result)
-                detail = f"{result.get('pending_count', 0)} pending"
+                detail = scan_detail(task["op"], result)
         elif task["op"] == "apply":
             args = task["args"] or {}
             await tlog.line(f"▸ selection {fleet.describe_selection(args.get('selection') or {})}")

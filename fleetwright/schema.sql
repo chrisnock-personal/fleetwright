@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS hosts (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS machine_id TEXT;   -- /etc/machine-id, to recognise a re-enrolled host
+-- Other tools that install updates (unattended-upgrades, dnf-automatic), from the last scan:
+-- [{"tool": .., "installs": bool, "detail": ..}]. NULL: not reported (an older agent).
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;
 CREATE INDEX IF NOT EXISTS idx_hosts_group ON hosts (group_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_machine ON hosts (machine_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_tags ON hosts USING GIN (tags);

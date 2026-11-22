@@ -28,6 +28,9 @@ WINDOW_CLOSE = {"finish_started": "Finish hosts already started, start no new on
                 "stop": "Stop at once (running hosts finish their current step)",
                 "carry_on": "Carry on until done"}
 TASK_CHANNEL = "fw_tasks"
+# A host where unattended-upgrades or dnf-automatic installs updates by itself.
+AUTO_UPDATING_SQL = "jsonb_path_exists(COALESCE(h.auto_updates, '[]'), '$[*] ? (@.installs == true)')"
+AUTO_OFF_TITLE = "Turn off automatic updates"
 
 
 def now() -> datetime:
@@ -310,6 +313,9 @@ async def record_scan(host_id: int, result: dict) -> None:
                 WHERE id = %s""",
             (result.get("pending_count", 0), result.get("security_count", 0),
              bool(result.get("reboot_required")), host_id))
+        if "auto_updates" in result:
+            await conn.execute("UPDATE hosts SET auto_updates = %s WHERE id = %s",
+                               (J(result["auto_updates"]), host_id))
 
 
 async def record_changes(task_id: Optional[int], host_id: int, changes: list[dict]) -> None:

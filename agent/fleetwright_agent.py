@@ -5,7 +5,7 @@ FleetWright agent.
 Runs as root under systemd, keeps one WebSocket open to the FleetWright
 server (it dials out; the host needs no open port), scans for updates on
 its own timer and runs the operations the server sends. It runs only
-pkgops operations (scan, apply, reboot), never arbitrary commands.
+pkgops operations (scan, apply, reboot, auto_off), never arbitrary commands.
 
     fleetwright_agent.py enroll <server url> <enrolment token> [--ca server.pem] [--insecure]
     fleetwright_agent.py run
@@ -30,7 +30,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pkgops  # noqa: E402
 
-AGENT_VERSION = "0.1.0"
+AGENT_VERSION = "0.2.0"
 CONFIG_PATH = os.environ.get("FLEETWRIGHT_AGENT_CONFIG", "/etc/fleetwright-agent/agent.json")
 log = logging.getLogger("fleetwright-agent")
 
@@ -170,6 +170,8 @@ class Agent:
                         if not isinstance(sel, dict):
                             raise pkgops.OpError("bad selection")
                         return pkgops.op_apply(sel, logger)
+                    if op == "auto_off":
+                        return pkgops.op_auto_off(logger)
                     return {"ok": False, "error": f"operation {op} isn't allowed"}
                 except pkgops.OpError as e:
                     return {"ok": False, "error": str(e)}
@@ -179,7 +181,7 @@ class Agent:
                     logger.flush()
 
             result = await asyncio.to_thread(work)
-            if op in ("scan", "apply"):
+            if op in ("scan", "apply", "auto_off"):
                 self.last_scan = time.monotonic()
             await self.send({"type": "result", "task_id": task_id, "result": result})
 

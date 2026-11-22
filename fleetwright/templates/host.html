@@ -32,6 +32,12 @@
   </div>
 
   {% if h.last_error %}<div class="flash bad" role="alert"><div><strong>Last attempt failed.</strong> <span class="mono" style="white-space:pre-wrap">{{ h.last_error }}</span></div></div>{% endif %}
+  {% set autos = (h.auto_updates or [])|selectattr('installs')|list %}
+  {% if autos %}<div class="flash warn" role="status"><div><strong>Updates are also installed outside FleetWright.</strong>
+    {% for a in autos %}<span class="mono">{{ a.tool }}</span> {{ a.detail }}{{ '; ' if not loop.last else '.' }}{% endfor %}
+    If it runs during a FleetWright install, its changes are recorded as FleetWright's.
+    {% if can(current_user, 'operator') %}<form method="post" action="/hosts/{{ h.id }}/action" class="inline-form" data-confirm="Stop {{ autos|map(attribute='tool')|join(' and ') }} installing updates on {{ h.name }}? FleetWright's own policies and installs are then the only way updates arrive.">{{ csrf_field() }}<button class="btn small" type="submit" name="action" value="auto_off">Turn off</button></form>{% endif %}
+  </div></div>{% endif %}
   {% if active_task %}<div class="flash info"><div><strong>{{ "Running" if active_task.status == "running" else "Queued" }}:</strong> {{ active_task.op }}{% if active_task.title %} for <a href="/runs/{{ active_task.run_id }}?task={{ active_task.id }}">{{ active_task.title }}</a>{% endif %}{% if active_task.detail %} · {{ active_task.detail }}{% endif %}</div></div>{% endif %}
 
   <div class="kpis small">
@@ -117,6 +123,7 @@
           <div>Tags<b>{{ h.tags|join(', ') or '—' }}</b></div>
           <div>Connection<b>{{ 'Agent (outbound WebSocket)' if h.mode == 'agent' else 'SSH, port ' ~ h.port }}</b></div>
           <div>Package manager<b>{{ h.pkg_family or '—' }}</b></div>
+          <div>Automatic updates<b>{% if h.auto_updates is none %}{{ 'not reported (agent older than 0.2.0)' if h.mode == 'agent' and h.last_scan_at else '—' }}{% else %}{% for a in h.auto_updates %}{{ a.tool }}: {{ a.detail }}{{ '; ' if not loop.last }}{% else %}none{% endfor %}{% endif %}</b></div>
           <div>Held (never installed)<b class="mono">{{ h.held|join(', ') or '—' }}</b></div>
           <div>Auto-install policies<b>{% for p in policies %}<a href="/schedules/policies/{{ p.id }}">{{ p.name }}</a>{{ '' if p.enabled else ' (off)' }}{{ ', ' if not loop.last }}{% else %}none{% endfor %}</b></div>
           {% if h.mode == 'ssh' %}<div>Pinned host key<b class="mono">{{ (h.ssh_host_key or 'not yet')[:40] }}{{ '…' if h.ssh_host_key }}</b></div>{% endif %}
@@ -156,7 +163,7 @@
           {% for t in history %}
           <div class="hist">
             <div>
-              {% if t.run_id %}<a href="/runs/{{ t.run_id }}?task={{ t.id }}">#{{ t.run_id }} {{ t.title }}</a>{% else %}<span style="font-size:14px;font-weight:500">{{ t.op|capitalize }}</span>{% endif %}
+              {% if t.run_id %}<a href="/runs/{{ t.run_id }}?task={{ t.id }}">#{{ t.run_id }} {{ t.title }}</a>{% else %}<span style="font-size:14px;font-weight:500">{{ t.op|label }}</span>{% endif %}
               <span class="detail">{{ (t.finished_at or t.created_at)|when }}{% if t.detail %} · {{ t.detail }}{% endif %}</span>
             </div>
             <span class="badge {{ t.status|tone }}">{{ t.status|label }}</span>

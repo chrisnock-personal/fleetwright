@@ -63,6 +63,7 @@
           <button type="submit" class="btn small" name="action" value="tag">Add tags</button>
           <select name="group_id" aria-label="Move to group"><option value="">No group</option>{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select>
           <button type="submit" class="btn small" name="action" value="group">Move</button>
+          <button type="submit" class="btn small" name="action" value="auto_off" title="Stop unattended-upgrades or dnf-automatic installing updates by themselves">Turn off automatic updates</button>
           {% if can(current_user, 'admin') %}<button type="submit" class="btn small danger" name="action" value="delete">Remove</button>{% endif %}
         </div>
       </details>

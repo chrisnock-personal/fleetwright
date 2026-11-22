@@ -23,6 +23,7 @@ STATUS_FILTERS = {
     "unreachable": ("Unreachable", "((h.mode = 'agent' AND NOT h.agent_connected) "
                                    "OR (h.mode = 'ssh' AND h.last_error LIKE 'Can''t connect%%'))"),
     "never": ("Not scanned", "h.last_scan_at IS NULL"),
+    "auto": ("Auto-updating", fleet.AUTO_UPDATING_SQL),
 }
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 PER_PAGE = (25, 50, 100, 250)
@@ -102,6 +103,10 @@ async def host_bulk(request: Request):
                                         actor=u["name"], host_ids=ids, selection=selection,
                                         batch_size=int(form.get("batch") or 0) if str(form.get("batch") or "").isdigit() else 0,
                                         reboot="never")
+        return redirect(f"/runs/{run_id}")
+    if action == "auto_off":
+        run_id = await fleet.create_run(kind="auto_off", title=fleet.AUTO_OFF_TITLE, actor=u["name"],
+                                        host_ids=ids)
         return redirect(f"/runs/{run_id}")
     if action == "tag":
         tags = split_words(form.get("tags"))
@@ -283,6 +288,10 @@ async def host_action(request: Request, host_id: int):
         return redirect(f"/runs/{run_id}")
     if action == "reboot":
         run_id = await fleet.create_run(kind="reboot", title="Reboot", actor=u["name"], host_ids=[host_id])
+        return redirect(f"/runs/{run_id}")
+    if action == "auto_off":
+        run_id = await fleet.create_run(kind="auto_off", title=fleet.AUTO_OFF_TITLE, actor=u["name"],
+                                        host_ids=[host_id])
         return redirect(f"/runs/{run_id}")
     raise HTTPException(400, "Unknown action")
 

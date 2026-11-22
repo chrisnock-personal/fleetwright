@@ -171,6 +171,7 @@ nav.sections a.current { background: var(--surface2); color: var(--text); font-w
 .flash.ok { background: var(--good-bg); }
 .flash.bad { background: var(--bad-bg); }
 .flash.info { background: var(--info-bg); }
+.flash.warn { background: var(--warn-bg); }
 .flash ul { margin: 0; padding-left: 18px; }
 
 .card.pad { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }

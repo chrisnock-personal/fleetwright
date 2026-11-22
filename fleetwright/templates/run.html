@@ -11,7 +11,7 @@
         {% if run.status == 'running' %}<span class="live">Running</span>{% else %}<span class="badge {{ run.status|tone }}">{{ run.status|label }}</span>{% endif %}</div>
       <p class="meta-line">
         <span>{{ totals.n }} host{{ '' if totals.n == 1 else 's' }}</span>
-        {% if run.kind == 'apply' %}<span>{{ describe_selection(run.selection) }}</span>{% else %}<span>{{ run.kind|capitalize }}</span>{% endif %}
+        {% if run.kind == 'apply' %}<span>{{ describe_selection(run.selection) }}</span>{% else %}<span>{{ run.kind|label }}</span>{% endif %}
         {% if run.batch_size %}<span>{{ run.batch_size }} at a time{{ ', canary first' if run.canary }}</span>{% endif %}
         {% if run.max_failures %}<span>stop after {{ run.max_failures }} failed</span>{% endif %}
         {% if run.kind == 'apply' %}<span>reboot: {{ REBOOT_CHOICES[run.reboot]|lower }}</span>{% endif %}

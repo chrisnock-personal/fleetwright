@@ -16,6 +16,7 @@ Operations
     scan                   refresh the package lists and list pending updates
     apply  <selection>     install the updates a selection picks (JSON argument)
     reboot                 reboot in a few seconds, returning first
+    auto_off               stop unattended-upgrades / dnf-automatic installing updates
 
 Supported: Ubuntu (apt) and Fedora (dnf5). Other apt/dnf distributions
 probably work but aren't tested.
@@ -33,7 +34,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 RESULT_PREFIX = "FWRESULT "
 
 SEVERITY_ORDER = {"low": 1, "moderate": 2, "important": 3, "critical": 4}
@@ -293,6 +294,140 @@ def dnf_install(chosen: list[dict], log) -> None:
     run(["dnf", "-y", "upgrade"] + [f"{p['name']}-{p['available']}.{p['arch']}" for p in chosen], log)
 
 
+# ─── Other tools that install updates ───────────────────────────────────────
+# unattended-upgrades (Ubuntu, on by default) and dnf-automatic install updates by
+# themselves. If one runs during a FleetWright install, its changes land in the
+# before/after diff and are recorded as FleetWright's.
+
+APT_UU_OFF_FILE = "/etc/apt/apt.conf.d/99fleetwright-no-unattended-upgrades"
+# dnf5 (Fedora 41+) has one timer that installs only if apply_updates is on; dnf4
+# (RHEL, older Fedora) also has one that always installs.
+DNF_AUTO_TIMERS = {"dnf5-automatic.timer": "config", "dnf-automatic.timer": "config",
+                   "dnf-automatic-install.timer": "always"}
+DNF_AUTO_CONFS = ("/etc/dnf/automatic.conf", "/usr/share/dnf5/dnf5-plugins/automatic.conf")
+
+# APT::Periodic::Unattended-Upgrade "1";
+# Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";
+_APT_CONF_LINE = re.compile(r'^(\S+?)(::)? "(.*)";$')
+
+
+def parse_apt_config(text: str) -> tuple[str, list[str]]:
+    """apt-config dump -> (APT::Periodic::Unattended-Upgrade, the origins unattended-upgrades takes)."""
+    periodic, origins = "0", []
+    for line in text.splitlines():
+        m = _APT_CONF_LINE.match(line.strip())
+        if not m:
+            continue
+        key, is_item, value = m.groups()
+        if key == "APT::Periodic::Unattended-Upgrade":
+            periodic = value
+        elif is_item and key in ("Unattended-Upgrade::Allowed-Origins", "Unattended-Upgrade::Origins-Pattern"):
+            origins.append(value)
+    return periodic, origins
+
+
+def uu_scope(origins: list[str]) -> str:
+    """What unattended-upgrades installs. The release pocket itself (no suffix) never
+    changes after release, so only -updates, -backports, -proposed or a pattern
+    that doesn't name security count as 'other'."""
+    other = any(re.search(r"-(updates|backports|proposed)\b", o)
+                or ("=" in o and "security" not in o.lower()) for o in origins)
+    return "security and other updates" if other else "security updates"
+
+
+def parse_dnf_automatic_conf(text: str) -> tuple[bool, str]:
+    """automatic.conf -> (apply_updates, upgrade_type)."""
+    apply, kind, section = False, "default", ""
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line.startswith("["):
+            section = line.strip("[]").strip()
+        elif "=" in line and section == "commands":
+            k, v = (s.strip() for s in line.split("=", 1))
+            if k == "apply_updates":
+                apply = v.lower() in ("yes", "true", "1", "on")
+            elif k == "upgrade_type":
+                kind = v.lower()
+    return apply, kind
+
+
+def _unit_on(unit: str) -> bool:
+    if not shutil.which("systemctl"):
+        return False
+    for verb, want in (("is-enabled", ("enabled", "enabled-runtime")), ("is-active", ("active",))):
+        try:
+            _, out = run(["systemctl", verb, unit], ok_codes=range(256), quiet=True)
+        except (OpError, OSError):
+            continue
+        if out.strip().splitlines()[:1] and out.strip().splitlines()[0] in want:
+            return True
+    return False
+
+
+def apt_auto_updates() -> list[dict]:
+    if not shutil.which("unattended-upgrade"):
+        return []
+    _, out = run(["apt-config", "dump"], quiet=True)
+    periodic, origins = parse_apt_config(out)
+    timer = _unit_on("apt-daily-upgrade.timer")
+    installs = periodic not in ("0", "") and timer
+    if installs:
+        detail = f"installs {uu_scope(origins)} daily"
+    elif not timer:
+        detail = "installed, but apt-daily-upgrade.timer is off"
+    else:
+        detail = "installed, but turned off (APT::Periodic::Unattended-Upgrade 0)"
+    return [{"tool": "unattended-upgrades", "installs": installs, "detail": detail}]
+
+
+def dnf_auto_updates() -> list[dict]:
+    conf = next((_read(p) for p in DNF_AUTO_CONFS if os.path.exists(p)), "")
+    apply, kind = parse_dnf_automatic_conf(conf)
+    found, seen = [], set()
+    for timer, mode in DNF_AUTO_TIMERS.items():
+        if not _unit_on(timer):
+            continue
+        # On Fedora 41+ dnf-automatic.timer is an alias of dnf5-automatic.timer.
+        _, real = run(["systemctl", "show", "-p", "Id", "--value", timer], ok_codes=range(256), quiet=True)
+        if (real.strip() or timer) in seen:
+            continue
+        seen.add(real.strip() or timer)
+        installs = mode == "always" or apply
+        what = "security updates" if kind == "security" else "all updates"
+        found.append({"tool": timer.removesuffix(".timer"), "installs": installs,
+                      "detail": f"installs {what}" if installs else "downloads or notifies only (apply_updates = no)",
+                      "unit": timer})
+    return found
+
+
+def auto_updates(fam: str) -> list[dict]:
+    """Never fails a scan: a problem here is reported as an entry."""
+    try:
+        return apt_auto_updates() if fam == "apt" else dnf_auto_updates()
+    except (OpError, OSError) as e:
+        return [{"tool": "unknown", "installs": False, "detail": f"couldn't check: {str(e).splitlines()[0]}"}]
+
+
+def op_auto_off(log=_print_log) -> dict:
+    """Stop the tools above installing updates, then rescan. Reversible: delete the
+    apt file, or systemctl enable --now the timer."""
+    fam = family()
+    log("▸ turn off automatic updates")
+    found = [a for a in auto_updates(fam) if a["installs"]]
+    if not found:
+        log("nothing here installs updates by itself")
+    elif fam == "apt":
+        with open(APT_UU_OFF_FILE, "w") as f:
+            f.write("// Written by FleetWright, which installs updates on this host.\n"
+                    "// Delete this file to let unattended-upgrades install them again.\n"
+                    'APT::Periodic::Unattended-Upgrade "0";\n')
+        log(f"wrote {APT_UU_OFF_FILE}")
+    else:
+        for a in found:
+            run(["systemctl", "disable", "--now", a["unit"]], log)
+    return op_scan(log, refresh=False)
+
+
 # ─── Choosing what to install ───────────────────────────────────────────────
 
 def _matches(name: str, patterns) -> bool:
@@ -362,8 +497,12 @@ def op_scan(log=_print_log, refresh: bool = True) -> dict:
     s = _summary(pending)
     log(f"{s['pending_count']} updates pending, {s['security_count']} security"
         + (" · reboot required" if reboot else ""))
+    autos = auto_updates(fam)
+    for a in autos:
+        if a["installs"]:
+            log(f"note: {a['tool']} {a['detail']}, outside FleetWright")
     return {"ok": True, "facts": facts(), "pending": pending, "reboot_required": reboot,
-            "os_holds": holds, **s}
+            "os_holds": holds, "auto_updates": autos, **s}
 
 
 def op_apply(selection: dict, log=_print_log) -> dict:
@@ -421,6 +560,8 @@ def main(argv: list[str]) -> int:
             result = op_apply(json.loads(argv[1]) if len(argv) > 1 else {"mode": "all"})
         elif op == "reboot":
             result = op_reboot()
+        elif op == "auto_off":
+            result = op_auto_off()
         else:
             result = {"ok": False, "error": f"unknown operation {op}"}
     except OpError as e:

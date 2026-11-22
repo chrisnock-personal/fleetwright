@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from fastapi.responses import PlainTextResponse, Response
 
 from . import config, db, fleet, security, tls
-from .worker import apply_detail, record_apply, wants_reboot
+from .worker import apply_detail, record_apply, scan_detail, wants_reboot
 
 log = logging.getLogger("fleetwright.gateway")
 router = APIRouter()
@@ -255,10 +255,10 @@ async def task_result(conn: AgentConn, task: dict, result: dict) -> None:
                          str(result.get("error", ""))[:500], task["host_id"])
         await fleet.finish_task(task["id"], False, str(result.get("error", "failed"))[:500], result)
         return
-    if task["op"] == "scan":
+    if task["op"] in ("scan", "auto_off"):
         await fleet.record_scan(task["host_id"], result)
         await fleet.append_log(task["id"], _stamp("✓ done"))
-        await fleet.finish_task(task["id"], True, f"{result.get('pending_count', 0)} pending", result)
+        await fleet.finish_task(task["id"], True, scan_detail(task["op"], result), result)
     elif task["op"] == "apply":
         await record_apply(task, result)
         detail = apply_detail(result)
