@@ -7,7 +7,6 @@ Bugs are issues too, closed by the commit that fixes them.
 
 1. [#8](https://github.com/chrisnock-personal/fleetwright/issues/8) Notifications (email, webhook, ntfy)
 2. [#9](https://github.com/chrisnock-personal/fleetwright/issues/9) Backups and secret-key rotation
-3. [#10](https://github.com/chrisnock-personal/fleetwright/issues/10) Agent self-update
 
 ## Features
 
@@ -31,7 +30,6 @@ Bugs are issues too, closed by the commit that fixes them.
 - [#23](https://github.com/chrisnock-personal/fleetwright/issues/23) Use a real migration tool instead of schema.sql
 - [#24](https://github.com/chrisnock-personal/fleetwright/issues/24) Postgres over TLS when the database is on another host
 - [#25](https://github.com/chrisnock-personal/fleetwright/issues/25) Integration tests in CI (Ubuntu/Fedora containers, pip-audit, gitleaks)
-- [#26](https://github.com/chrisnock-personal/fleetwright/issues/26) Show when an agent is older than the server
 
 ## Docs and publishing
 
