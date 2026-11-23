@@ -216,11 +216,14 @@ class Worker:
             config.TASK_TIMEOUT + config.REBOOT_WAIT)
         if n:
             log.warning("failed %d stuck tasks", n)
-        # An agent host that was told to reboot and hasn't reconnected since.
+        # An agent host that was told to reboot, or an agent that replaced itself, and
+        # hasn't reconnected since.
         n = await db.execute(
             """UPDATE tasks SET status = 'failed', finished_at = NOW(),
-                      detail = 'Rebooted but the agent hadn''t reconnected within the reboot wait'
-                WHERE status = 'running' AND detail = 'rebooting'
+                      detail = CASE detail WHEN 'rebooting'
+                               THEN 'Rebooted but the agent hadn''t reconnected within the reboot wait'
+                               ELSE 'The updated agent hadn''t connected within the reboot wait' END
+                WHERE status = 'running' AND detail IN ('rebooting', 'restarting agent')
                   AND (result->>'reboot_started')::timestamptz < NOW() - make_interval(secs => %s)""",
             config.REBOOT_WAIT)
         if n:

@@ -3,6 +3,14 @@
 {% block settings %}
 <div><h1>Agents</h1>
   <p class="lede">The agent is a small Python service that connects out to FleetWright, so hosts need no open port. {{ agents.n }} enrolled, {{ agents.up }} connected. Agents reach this server at <code class="mono">{{ public_url }}</code> (<code class="mono">FLEETWRIGHT_PUBLIC_URL</code>).</p></div>
+<section class="card pad">
+  <h2>Agent version</h2>
+  <p>This server hands out agent <b>{{ server_agent.version }}</b> <span class="tone-muted mono">({{ server_agent.bundle }})</span>.
+  {% if agents.updatable %}<a href="/hosts?status=agent_old">{{ agents.updatable }} agent{{ '' if agents.updatable == 1 else 's' }}</a> differ{{ 's' if agents.updatable == 1 }} from it.{% elif agents.n %}Every agent that can update itself matches it.{% endif %}
+  {% if agents.too_old %}{{ agents.too_old }} {{ 'is' if agents.too_old == 1 else 'are' }} older than 0.3.0 and can't update {{ 'itself' if agents.too_old == 1 else 'themselves' }}: run the install command on {{ 'it' if agents.too_old == 1 else 'them' }} once.{% endif %}</p>
+  <p class="hint">An update fetches the agent's two files over the agent's own verified connection, checks each against the SHA-256 the server sends, swaps them in and restarts the agent. It runs as a normal run: one host first, then a tenth of them at a time, stopping at the first failure.</p>
+  {% if agents.updatable %}<form method="post" action="/settings/agents/update" data-confirm="Update {{ agents.updatable }} agent{{ '' if agents.updatable == 1 else 's' }} to {{ server_agent.version }}?">{{ csrf_field() }}<button class="btn primary" type="submit">Update {{ agents.updatable }} agent{{ '' if agents.updatable == 1 else 's' }}</button></form>{% endif %}
+</section>
 {% if new %}
 <section class="card pad" style="border-color:var(--accent)">
   <h2>Install command for “{{ new.label }}”</h2>

@@ -132,12 +132,27 @@ async def agents_page(request: Request):
                                  LEFT JOIN groups g ON g.id = t.group_id ORDER BY t.id DESC""")
     groups = await db.fetch("SELECT id, name FROM groups ORDER BY name")
     new = request.session.pop("new_enroll", None)
-    agents = await db.fetchone("""SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE agent_connected) AS up
-                                    FROM hosts WHERE mode = 'agent'""")
+    agents = await db.fetchone(f"""SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE agent_connected) AS up,
+                                          COUNT(*) FILTER (WHERE {gateway.outdated_sql()}
+                                                           AND agent_bundle IS NOT NULL) AS updatable,
+                                          COUNT(*) FILTER (WHERE agent_bundle IS NULL) AS too_old
+                                     FROM hosts h WHERE mode = 'agent'""")
     command = gateway.install_command(new["token"]) if new else None
     return render(request, "settings_agents.html", tokens=tokens, groups=groups, new=new, section="agents",
                   public_url=config.PUBLIC_URL, agents=agents, command=command,
-                  plain_http=config.PUBLIC_URL.startswith("http://"))
+                  server_agent=gateway.agent_bundle(), plain_http=config.PUBLIC_URL.startswith("http://"))
+
+
+@router.post("/settings/agents/update")
+async def agents_update(request: Request):
+    await form_data(request)
+    u = require(request, "admin")
+    ids = [r["id"] for r in await db.fetch("SELECT id FROM hosts WHERE mode = 'agent'")]
+    run_id = await gateway.start_agent_update(u["name"], ids)
+    if run_id is None:
+        flash(request, "Every agent that can update itself already matches this server.", "info")
+        return redirect("/settings/agents")
+    return redirect(f"/runs/{run_id}")
 
 
 @router.post("/settings/agents")

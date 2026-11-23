@@ -17,6 +17,7 @@
         <span>{{ h.os_pretty or "OS not known yet" }}</span>
         {% if h.kernel %}<span>kernel {{ h.kernel }}</span>{% endif %}
         {% if h.mode == 'agent' %}<span class="{{ 'tone-good' if h.agent_connected else 'tone-bad' }}">Agent {{ h.agent_version or '' }} · {{ 'connected' if h.agent_connected else 'offline' }}</span>
+        {% if h.agent_version and h.agent_bundle != server_agent.bundle %}<span class="badge warn" title="{{ 'This server hands out ' ~ server_agent.version ~ '.' if h.agent_bundle else 'Agents older than 0.3.0 cannot update themselves: run the install command on this host once.' }}">{{ ('Update to ' ~ server_agent.version) if h.agent_bundle else 'Older than the server: reinstall' }}</span>{% endif %}
         {% else %}<span>SSH as {{ h.key_user or '?' }} · key {{ h.key_name or 'none' }}</span>{% endif %}
       </div>
     </div>
@@ -25,6 +26,7 @@
       {{ csrf_field() }}
       <button type="submit" class="btn" name="action" value="scan">Scan now</button>
       <button type="submit" class="btn" name="action" value="reboot">Reboot</button>
+      {% if h.mode == 'agent' and h.agent_bundle and h.agent_bundle != server_agent.bundle %}<button type="submit" class="btn" name="action" value="agent_update">Update agent</button>{% endif %}
       <button type="submit" class="btn" name="action" value="apply_all" {{ 'disabled' if not counts.all }}>Apply all ({{ counts.all }})</button>
       <button type="submit" class="btn primary" name="action" value="apply_security" {{ 'disabled' if not counts.security }}>Apply security ({{ counts.security }})</button>
     </form>

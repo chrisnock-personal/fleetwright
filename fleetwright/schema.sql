@@ -73,6 +73,9 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS machine_id TEXT;   -- /etc/machine-id
 -- Other tools that install updates (unattended-upgrades, dnf-automatic), from the last scan:
 -- [{"tool": .., "installs": bool, "detail": ..}]. NULL: not reported (an older agent).
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;
+-- The agent's files as one id (agents from 0.3.0 report it); compared with the server's
+-- to tell an outdated agent. NULL: an older agent, which can't update itself.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_bundle TEXT;
 CREATE INDEX IF NOT EXISTS idx_hosts_group ON hosts (group_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_machine ON hosts (machine_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_tags ON hosts USING GIN (tags);

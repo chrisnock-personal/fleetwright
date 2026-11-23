@@ -90,6 +90,22 @@ otherwise.
   *Schedule an install*. Optional admin approval; if the window opens
   unapproved, it's missed rather than run.
 
+## Updating agents
+
+Agents from 0.3.0 on update themselves when told to. A host whose agent isn't
+the one this server hands out shows *Update to …* on its page, the hosts list
+has an *Agent outdated* filter, and **Settings → Agents** has an *Update N
+agents* button. An update is a normal run: one host first, then a tenth of
+them at a time, stopping at the first failure. Each agent fetches its two
+files over its own verified HTTPS connection, checks each against the SHA-256
+the server sent over the WebSocket, refuses any other file name and an agent
+that doesn't compile, swaps them in and exits for systemd to start the new
+one. The task finishes when the agent reconnects as the new version, and fails
+if it hasn't within `FLEETWRIGHT_REBOOT_WAIT`; there is no automatic rollback,
+so a host whose new agent won't start needs the install command run again.
+Agents older than 0.3.0 can't update themselves: run the install command on
+them once.
+
 ## Agentless hosts
 
 FleetWright connects as the key's user and runs `sudo -n python3 -`, sending

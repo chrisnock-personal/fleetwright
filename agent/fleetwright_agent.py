@@ -5,7 +5,10 @@ FleetWright agent.
 Runs as root under systemd, keeps one WebSocket open to the FleetWright
 server (it dials out; the host needs no open port), scans for updates on
 its own timer and runs the operations the server sends. It runs only
-pkgops operations (scan, apply, reboot, auto_off), never arbitrary commands.
+pkgops operations (scan, apply, reboot, auto_off), never arbitrary commands,
+and can replace its own two files with the server's (agent_update): each is
+fetched over the same verified HTTPS and must match the SHA-256 the server
+sent over the WebSocket.
 
     fleetwright_agent.py enroll <server url> <enrolment token> [--ca server.pem] [--insecure]
     fleetwright_agent.py run
@@ -17,10 +20,12 @@ Needs python3 and python3-websockets (both packaged on Ubuntu and Fedora).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import random
+import re
 import ssl
 import sys
 import time
@@ -30,7 +35,10 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pkgops  # noqa: E402
 
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.3.0"
+AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
+# The files a self-update may replace; the server can't name any other path.
+BUNDLE_FILES = ("fleetwright_agent.py", "pkgops.py")
 CONFIG_PATH = os.environ.get("FLEETWRIGHT_AGENT_CONFIG", "/etc/fleetwright-agent/agent.json")
 log = logging.getLogger("fleetwright-agent")
 
@@ -100,6 +108,57 @@ def host_facts(server: str) -> dict:
     except OSError:
         pass
     return facts
+
+
+def bundle_id(hashes: dict[str, str]) -> str:
+    """One short id for a set of agent files (the server computes the same)."""
+    joined = "".join(f"{name}:{hashes[name]}\n" for name in sorted(hashes))
+    return hashlib.sha256(joined.encode()).hexdigest()[:16]
+
+
+def own_bundle() -> str:
+    hashes = {}
+    for name in BUNDLE_FILES:
+        with open(os.path.join(AGENT_DIR, name), "rb") as f:
+            hashes[name] = hashlib.sha256(f.read()).hexdigest()
+    return bundle_id(hashes)
+
+
+def self_update(cfg: dict, want: dict, log) -> dict:
+    """Fetch the server's agent files, check each against its SHA-256, then swap them
+    in together. The caller exits afterwards and systemd starts the new agent."""
+    files = want.get("files") or {}
+    if set(files) != set(BUNDLE_FILES) or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in files.values()):
+        raise pkgops.OpError("the server sent an unexpected file list")
+    if want.get("bundle") == own_bundle():
+        log("already this version")
+        return {"ok": True, "restarting": False}
+    ctx = tls_context(cfg) if cfg["server"].startswith("https://") else None
+    staged = []
+    try:
+        for name in BUNDLE_FILES:
+            log(f"fetching {name}")
+            with urllib.request.urlopen(f"{cfg['server']}/agent/files/{name}", timeout=60, context=ctx) as r:
+                data = r.read()
+            got = hashlib.sha256(data).hexdigest()
+            if got != files[name]:
+                raise pkgops.OpError(f"{name}: SHA-256 {got[:12]}… doesn't match the {files[name][:12]}… "
+                                     "the server announced; nothing replaced")
+            tmp = os.path.join(AGENT_DIR, name + ".new")
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.chmod(tmp, 0o644)
+            staged.append((tmp, os.path.join(AGENT_DIR, name)))
+        with open(staged[0][0]) as f:
+            compile(f.read(), "fleetwright_agent.py", "exec")  # refuse an agent that can't even start
+        for tmp, final in staged:
+            os.replace(tmp, final)
+    finally:
+        for tmp, _ in staged:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    log(f"replaced; restarting as {want.get('version', '?')}")
+    return {"ok": True, "restarting": True, "version": want.get("version"), "bundle": want.get("bundle")}
 
 
 def ws_url(server: str) -> str:
@@ -172,6 +231,8 @@ class Agent:
                         return pkgops.op_apply(sel, logger)
                     if op == "auto_off":
                         return pkgops.op_auto_off(logger)
+                    if op == "agent_update":
+                        return self_update(self.cfg, args, logger)
                     return {"ok": False, "error": f"operation {op} isn't allowed"}
                 except pkgops.OpError as e:
                     return {"ok": False, "error": str(e)}
@@ -184,6 +245,10 @@ class Agent:
             if op in ("scan", "apply", "auto_off"):
                 self.last_scan = time.monotonic()
             await self.send({"type": "result", "task_id": task_id, "result": result})
+            if op == "agent_update" and result.get("restarting"):
+                log.info("updated to %s; exiting so systemd starts the new agent", result.get("version"))
+                await asyncio.sleep(1)
+                os._exit(0)
 
     async def reboot(self, task_id) -> None:
         async with self.busy:
@@ -229,7 +294,8 @@ class Agent:
     async def session(self) -> None:
         self.ws = await ws_connect(self.cfg)
         log.info("connected to %s", self.cfg["server"])
-        await self.send({"type": "hello", "version": AGENT_VERSION, "facts": host_facts(self.cfg["server"])})
+        await self.send({"type": "hello", "version": AGENT_VERSION, "bundle": own_bundle(),
+                         "facts": host_facts(self.cfg["server"])})
         pending: set = set()
         try:
             async for raw in self.ws:

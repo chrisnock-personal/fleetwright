@@ -15,9 +15,11 @@ Messages, all JSON with a "type":
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -37,6 +39,24 @@ AGENT_FILES = {"fleetwright_agent.py": AGENT_DIR / "fleetwright_agent.py",
                "pkgops.py": Path(__file__).parent / "pkgops.py",
                "fleetwright-agent.service": AGENT_DIR / "fleetwright-agent.service"}
 NAME_OK = re.compile(r"[^A-Za-z0-9._-]+")
+BUNDLE_FILES = ("fleetwright_agent.py", "pkgops.py")
+RESTARTING = "restarting agent"   # a running agent_update task waiting for the new agent to say hello
+
+
+def agent_bundle() -> dict:
+    """The agent this server hands out: its version, each file's SHA-256 and one id for
+    the set (computed as the agent's bundle_id does)."""
+    global _bundle
+    if _bundle is None:
+        hashes = {n: hashlib.sha256(AGENT_FILES[n].read_bytes()).hexdigest() for n in BUNDLE_FILES}
+        joined = "".join(f"{n}:{hashes[n]}\n" for n in sorted(hashes))
+        m = re.search(r'^AGENT_VERSION = "([^"]+)"', AGENT_FILES["fleetwright_agent.py"].read_text(), re.M)
+        _bundle = {"version": m.group(1) if m else "?", "files": hashes,
+                   "bundle": hashlib.sha256(joined.encode()).hexdigest()[:16]}
+    return _bundle
+
+
+_bundle: Optional[dict] = None
 
 
 class AgentConn:
@@ -44,6 +64,8 @@ class AgentConn:
         self.host_id = host_id
         self.ws = ws
         self.lock = asyncio.Lock()
+        # tasks.claimed_by for the tasks handed to this connection
+        self.tag = f"gateway:{secrets.token_hex(4)}"
 
     async def send(self, msg: dict) -> None:
         async with self.lock:
@@ -192,12 +214,18 @@ async def agent_ws(ws: WebSocket):
         if connected.get(hid) is conn:
             del connected[hid]
             await db.execute("UPDATE hosts SET agent_connected = FALSE WHERE id = %s", hid)
-            n = await db.execute(
-                """UPDATE tasks SET status = 'failed', finished_at = NOW(),
-                          detail = 'The agent disconnected before finishing'
-                    WHERE host_id = %s AND status = 'running' AND COALESCE(detail, '') <> 'rebooting'""", hid)
-            if n:
-                await db.notify(fleet.TASK_CHANNEL, "done")
+            which, arg = "host_id = %s", hid
+        else:
+            # Replaced by a newer connection (the agent reconnected or re-enrolled): only
+            # what was handed to this one is lost.
+            which, arg = "claimed_by = %s", conn.tag
+        n = await db.execute(
+            f"""UPDATE tasks SET status = 'failed', finished_at = NOW(),
+                       detail = 'The agent disconnected before finishing'
+                 WHERE {which} AND status = 'running'
+                   AND COALESCE(detail, '') NOT IN ('rebooting', %s)""", arg, RESTARTING)
+        if n:
+            await db.notify(fleet.TASK_CHANNEL, "done")
 
 
 async def handle(conn: AgentConn, msg: dict) -> None:
@@ -206,9 +234,11 @@ async def handle(conn: AgentConn, msg: dict) -> None:
     if kind == "hello":
         facts = msg.get("facts") or {}
         await fleet.record_facts(hid, facts)
-        await db.execute("UPDATE hosts SET agent_version = %s, last_error = NULL WHERE id = %s",
-                         str(msg.get("version", ""))[:40], hid)
+        bundle = str(msg.get("bundle") or "")[:40] or None
+        await db.execute("UPDATE hosts SET agent_version = %s, agent_bundle = %s, last_error = NULL WHERE id = %s",
+                         str(msg.get("version", ""))[:40], bundle, hid)
         await finish_reboots(hid, facts.get("boot_id"))
+        await finish_agent_updates(hid, str(msg.get("version", "")), bundle)
         stale = await db.fetchval(
             """SELECT last_scan_at IS NULL OR last_scan_at < NOW() - make_interval(mins => %s)
                  FROM hosts WHERE id = %s""", config.SCAN_INTERVAL_MIN, hid)
@@ -259,6 +289,16 @@ async def task_result(conn: AgentConn, task: dict, result: dict) -> None:
         await fleet.record_scan(task["host_id"], result)
         await fleet.append_log(task["id"], _stamp("✓ done"))
         await fleet.finish_task(task["id"], True, scan_detail(task["op"], result), result)
+    elif task["op"] == "agent_update":
+        if result.get("restarting"):
+            # Done once the new agent connects and says which version it is.
+            await db.execute("UPDATE tasks SET detail = %s, result = %s WHERE id = %s", RESTARTING,
+                             db.J({"bundle": result.get("bundle"), "version": result.get("version"),
+                                   "reboot_started": datetime.now(timezone.utc).isoformat()}), task["id"])
+            await fleet.append_log(task["id"], _stamp("▸ waiting for the new agent to connect…"))
+        else:
+            await fleet.append_log(task["id"], _stamp("✓ done"))
+            await fleet.finish_task(task["id"], True, "Already up to date", result)
     elif task["op"] == "apply":
         await record_apply(task, result)
         detail = apply_detail(result)
@@ -289,6 +329,34 @@ async def finish_reboots(host_id: int, boot_id: Optional[str]) -> None:
             await fleet.queue_scan([host_id])
 
 
+def outdated_sql() -> str:
+    """Agent hosts whose agent isn't this server's (the bundle id is hex, safe to inline)."""
+    return f"(h.mode = 'agent' AND h.agent_bundle IS DISTINCT FROM '{agent_bundle()['bundle']}')"
+
+
+async def start_agent_update(actor: str, host_ids: list[int], title: str = "Update agents") -> Optional[int]:
+    """A run updating those of host_ids whose agent can update itself (0.3.0 on) and
+    differs from this server's: a canary first, then a tenth at a time, stopping at
+    the first failure. None when there's nothing to update."""
+    rows = await db.fetch(f"""SELECT id FROM hosts h WHERE id = ANY(%s) AND {outdated_sql()}
+                                AND agent_bundle IS NOT NULL""", host_ids)
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return None
+    return await fleet.create_run(kind="agent_update", title=title, actor=actor, host_ids=ids,
+                                  canary=len(ids) > 1, batch_percent=10, max_failures=1)
+
+
+async def finish_agent_updates(host_id: int, version: str, bundle: Optional[str]) -> None:
+    for t in await db.fetch("SELECT * FROM tasks WHERE host_id = %s AND status = 'running' AND detail = %s",
+                            host_id, RESTARTING):
+        want = (t["result"] or {}).get("bundle")
+        ok = bool(bundle) and bundle == want
+        text = f"Updated to {version}" if ok else f"The agent came back as {version or '?'}, not the new version"
+        await fleet.append_log(t["id"], _stamp(("✓ " if ok else "✗ ") + text))
+        await fleet.finish_task(t["id"], ok, text)
+
+
 # ─── Handing tasks to agents ────────────────────────────────────────────────
 
 CLAIM_SQL = """
@@ -314,8 +382,10 @@ async def dispatch_once() -> None:
             if task["op"] == "reboot":
                 await start_reboot(conn, task)
             else:
-                await conn.send({"type": "task", "task_id": task["id"], "op": task["op"],
-                                 "args": task["args"] or {}})
+                # An agent update always offers what this server has now.
+                args = agent_bundle() if task["op"] == "agent_update" else task["args"] or {}
+                await conn.send({"type": "task", "task_id": task["id"], "op": task["op"], "args": args})
+                await db.execute("UPDATE tasks SET claimed_by = %s WHERE id = %s", conn.tag, task["id"])
         except Exception as e:  # noqa: BLE001
             log.warning("couldn't hand task %s to agent %s: %s", task["id"], task["host_id"], e)
             await db.execute("UPDATE tasks SET status = 'queued', claimed_by = NULL, started_at = NULL "
@@ -358,7 +428,15 @@ async def pinger() -> None:
 
 
 async def startup() -> list[asyncio.Task]:
-    # Nothing is connected to a gateway that just started.
+    # Nothing is connected to a gateway that just started, so nothing it handed out is
+    # still being worked on, except reboots and agent updates, which finish when the
+    # agent says hello again.
     await db.execute("UPDATE hosts SET agent_connected = FALSE WHERE agent_connected")
+    n = await db.execute("""UPDATE tasks SET status = 'failed', finished_at = NOW(),
+                                   detail = 'FleetWright restarted while the agent was on this'
+                             WHERE status = 'running' AND claimed_by LIKE 'gateway%%'
+                               AND COALESCE(detail, '') NOT IN ('rebooting', %s)""", RESTARTING)
+    if n:
+        log.warning("failed %d agent tasks interrupted by a restart", n)
     return [asyncio.create_task(dispatcher()), asyncio.create_task(listener()),
             asyncio.create_task(pinger())]

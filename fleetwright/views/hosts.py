@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from .. import db, fleet
+from .. import db, fleet, gateway
 from ..webcommon import as_list, flash, form_data, redirect, render, require, split_words
 
 router = APIRouter()
@@ -24,6 +24,7 @@ STATUS_FILTERS = {
                                    "OR (h.mode = 'ssh' AND h.last_error LIKE 'Can''t connect%%'))"),
     "never": ("Not scanned", "h.last_scan_at IS NULL"),
     "auto": ("Auto-updating", fleet.AUTO_UPDATING_SQL),
+    "agent_old": ("Agent outdated", gateway.outdated_sql()),
 }
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 PER_PAGE = (25, 50, 100, 250)
@@ -107,6 +108,13 @@ async def host_bulk(request: Request):
     if action == "auto_off":
         run_id = await fleet.create_run(kind="auto_off", title=fleet.AUTO_OFF_TITLE, actor=u["name"],
                                         host_ids=ids)
+        return redirect(f"/runs/{run_id}")
+    if action == "agent_update":
+        run_id = await gateway.start_agent_update(u["name"], ids)
+        if run_id is None:
+            flash(request, "None of those hosts has an agent that can update itself and differs from "
+                           "this server's. Agents older than 0.3.0 need reinstalling once.", "info")
+            return redirect(back)
         return redirect(f"/runs/{run_id}")
     if action == "tag":
         tags = split_words(form.get("tags"))
@@ -247,7 +255,8 @@ async def host_page(request: Request, host_id: int, kind: str = "all"):
                                    ORDER BY t.id LIMIT 1""", host_id)
     policies = await db.fetch("SELECT id, name, enabled, target FROM policies ORDER BY name")
     applies = [p for p in policies if host_id in await fleet.resolve_target(p["target"])] if policies else []
-    return render(request, "host.html", h=h, pending=shown, counts=counts, kind=kind, new_pkgs=new_pkgs,
+    server_agent = gateway.agent_bundle()
+    return render(request, "host.html", h=h, server_agent=server_agent, pending=shown, counts=counts, kind=kind, new_pkgs=new_pkgs,
                   history=history, changes=changes, active_task=active, policies=applies, **await _choices())
 
 
@@ -292,6 +301,12 @@ async def host_action(request: Request, host_id: int):
     if action == "auto_off":
         run_id = await fleet.create_run(kind="auto_off", title=fleet.AUTO_OFF_TITLE, actor=u["name"],
                                         host_ids=[host_id])
+        return redirect(f"/runs/{run_id}")
+    if action == "agent_update":
+        run_id = await gateway.start_agent_update(u["name"], [host_id], "Update agent")
+        if run_id is None:
+            flash(request, "This agent is already the server's, or too old to update itself.", "info")
+            return redirect(f"/hosts/{host_id}")
         return redirect(f"/runs/{run_id}")
     raise HTTPException(400, "Unknown action")
 
