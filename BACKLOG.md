@@ -5,8 +5,7 @@ Bugs are issues too, closed by the commit that fixes them.
 
 ## Next up ([label: next up](https://github.com/chrisnock-personal/fleetwright/issues?q=is%3Aopen+label%3A%22next+up%22)), in this order (agreed 2026-11-10)
 
-1. [#8](https://github.com/chrisnock-personal/fleetwright/issues/8) Notifications (email, webhook, ntfy)
-2. [#9](https://github.com/chrisnock-personal/fleetwright/issues/9) Backups and secret-key rotation
+1. [#9](https://github.com/chrisnock-personal/fleetwright/issues/9) Backups and secret-key rotation
 
 ## Features
 
