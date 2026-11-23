@@ -25,6 +25,7 @@
 {% endmacro %}
 {% macro csrf_field() %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
 {% macro flashes_block() %}
+{% if current_user and can(current_user, 'admin') and key_problem() %}<div class="flash bad" role="alert"><div><strong>Stored secrets can't be read.</strong> {{ key_problem() }}</div></div>{% endif %}
 {% for tone, msg in flashes %}<div class="flash {{ tone }}" role="status">{{ msg }}</div>{% endfor %}
 {% endmacro %}
 {% set nav = [("/", "Overview", "overview"), ("/hosts", "Hosts", "hosts"), ("/runs", "Runs", "runs"), ("/schedules", "Schedules", "schedules")] %}

@@ -1,0 +1,7 @@
+# The backup service: pg_dump plus the HTTPS certificate, encrypted with age.
+# Uses the same PostgreSQL major version as the database, for pg_dump/pg_restore.
+FROM docker.io/library/postgres:16-alpine
+RUN apk add --no-cache age tar
+COPY backup.sh /usr/local/bin/fleetwright-backup
+RUN chmod 755 /usr/local/bin/fleetwright-backup
+ENTRYPOINT ["/usr/local/bin/fleetwright-backup"]

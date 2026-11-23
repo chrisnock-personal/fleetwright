@@ -195,6 +195,7 @@ class Worker:
                                 await self.due_scans()
                                 await self.sweep()
                                 await notify.check_unreachable()
+                                await notify.check_backup()
                         finally:
                             await conn.execute("SELECT pg_advisory_unlock(%s)", (SCHEDULER_LOCK,))
             except Exception:  # noqa: BLE001

@@ -1,0 +1,39 @@
+{% extends "settings_base.html" %}
+{% block title %}Backups · FleetWright{% endblock %}
+{% block settings %}
+<div><h1>Backups</h1>
+  <p class="lede">The backup service saves the database and the HTTPS certificate and key every day, encrypted with <a href="https://age-encryption.org">age</a> to public keys only. Whoever holds this server can make backups but not read them, and agents keep trusting a server restored from one.</p></div>
+<section class="card pad">
+  <h2>Last backup</h2>
+  {% if status %}
+  <div class="facts">
+    <div>When<b class="{{ 'tone-bad' if not status.ok or status.overdue }}">{{ status.when|when }} ({{ status.when|ago }}){% if status.overdue %} · overdue{% endif %}</b></div>
+    <div>Result<b class="{{ 'tone-good' if status.ok else 'tone-bad' }}">{{ 'Saved' if status.ok else 'Failed: ' ~ status.message }}</b></div>
+    {% if status.ok %}<div>File<b class="mono">{{ status.file }} · {{ (status.size / 1024)|round(1) }} KB</b></div>{% endif %}
+    <div>Kept<b>{{ status.kept }} backup{{ '' if status.kept == 1 else 's' }}, {{ status.schedule }}</b></div>
+  </div>
+  {% else %}
+  <p class="flash warn">No backups have been made. Nothing would survive losing this server's disk.</p>
+  {% endif %}
+</section>
+<section class="card pad">
+  <h2>Setting up backups</h2>
+  <ol class="steps">
+    <li>On another machine, make a key: <code class="mono">age-keygen -o fleetwright-backup.key</code>. Keep that file, and a copy of <code class="mono">FLEETWRIGHT_SECRET_KEY</code>, off this server. An SSH key you already have works too.</li>
+    <li>In <code class="mono">.env</code>, set <code class="mono">BACKUP_AGE_RECIPIENTS</code> to its public key (the <code class="mono">age1…</code> line, or the <code class="mono">ssh-ed25519 …</code> public key). Optionally <code class="mono">BACKUP_AT</code> (default 03:30 UTC), <code class="mono">BACKUP_KEEP</code> (14) and <code class="mono">BACKUP_DIR</code> (./backups).</li>
+    <li>Start it: <code class="mono">docker compose --profile backup up -d</code> (or <code class="mono">podman-compose --profile backup up -d</code>). It makes a backup straight away. A backup on demand: <code class="mono">docker compose --profile backup run --rm backup now</code>.</li>
+    <li>Copy the backup directory somewhere else as well: a backup on the same disk doesn't survive that disk.</li>
+  </ol>
+  <p class="hint">Notification channels that include “A backup failed, or none has been made for over a day” hear about failures.</p>
+  <h2 style="margin-top:18px">Restoring</h2>
+  <p>On the new or repaired server, with FleetWright's files and the old <code class="mono">.env</code> (or at least its <code class="mono">FLEETWRIGHT_SECRET_KEY</code>): <code class="mono">backup/restore.sh fleetwright-….tar.age fleetwright-backup.key</code>. It replaces the database and the certificate with the backup's and starts FleetWright; agents reconnect by themselves.</p>
+</section>
+<section class="card pad">
+  <h2>Secret key</h2>
+  <p><code class="mono">FLEETWRIGHT_SECRET_KEY</code> encrypts the stored SSH keys and notification secrets. To change it, put the new key in <code class="mono">FLEETWRIGHT_SECRET_KEY</code> and the old one in <code class="mono">FLEETWRIGHT_SECRET_KEY_PREVIOUS</code>, and restart: FleetWright re-encrypts everything under the new key, then the old one can go from <code class="mono">.env</code>. Everyone has to sign in again. Keep the old key with your backups until the ones made before the change have expired: restoring one of those needs it in <code class="mono">FLEETWRIGHT_SECRET_KEY_PREVIOUS</code>.</p>
+  <div class="facts">
+    <div>At the last start<b>{% if key_status.unreadable or key_status.key_changed %}<span class="tone-bad">secrets that no configured key opens</span>{% elif key_status.reencrypted %}re-encrypted {{ key_status.reencrypted }} secret{{ '' if key_status.reencrypted == 1 else 's' }} under the new key{% else %}every stored secret is under the current key{% endif %}</b></div>
+    <div>Previous keys configured<b>{{ previous or 'none' }}{% if previous and not key_status.unreadable and not key_status.key_changed %} · <span class="tone-warn">no longer needed: remove FLEETWRIGHT_SECRET_KEY_PREVIOUS</span>{% endif %}</b></div>
+  </div>
+</section>
+{% endblock %}

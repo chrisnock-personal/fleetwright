@@ -106,6 +106,40 @@ Mattermost message; with a signing secret, each carries
 about problems are high priority. Passwords, secrets and tokens are stored
 encrypted. Links in messages use `FLEETWRIGHT_PUBLIC_URL`.
 
+## Backups and the secret key
+
+An opt-in `backup` service saves the database and the HTTPS certificate and
+key once a day (and at its first start), encrypted with
+[age](https://age-encryption.org) to public keys only, so whoever holds the
+server can make backups but not read them. The certificate is in it because
+agents trust exactly this server's key: a server restored without it would
+mean enrolling every agent again.
+
+1. On another machine: `age-keygen -o fleetwright-backup.key` (an SSH key
+   works too). Keep it, with a copy of `FLEETWRIGHT_SECRET_KEY`, off the server.
+2. In `.env`: `BACKUP_AGE_RECIPIENTS=age1…` (its public key; several,
+   comma-separated), and optionally `BACKUP_AT` (03:30 UTC), `BACKUP_KEEP` (14)
+   and `BACKUP_DIR` (`./backups`). Copy that directory off the host too.
+3. `docker compose --profile backup up -d`. One now:
+   `docker compose --profile backup run --rm backup now`.
+
+**Settings → Backups** shows the last backup, and the "backup" notification
+event reports a failed backup or none for over a day. To restore, on the new or
+repaired server with the old `.env`:
+`backup/restore.sh fleetwright-….tar.age fleetwright-backup.key`. It replaces
+the database and the certificate, then starts FleetWright; agents reconnect by
+themselves.
+
+`FLEETWRIGHT_SECRET_KEY` encrypts stored SSH keys and notification secrets. To
+change it, put the new key in `FLEETWRIGHT_SECRET_KEY`, the old one in
+`FLEETWRIGHT_SECRET_KEY_PREVIOUS`, and restart: FleetWright re-encrypts
+everything under the new key and says so in its log, after which the old key
+can go from `.env` (everyone signs in again). Keep the old key with the
+backups made before the change: restoring one of them needs it in
+`FLEETWRIGHT_SECRET_KEY_PREVIOUS` again. If the key changes without the old
+one, FleetWright says so to admins on every page rather than failing later on
+each SSH connection.
+
 ## Updating agents
 
 Agents from 0.3.0 on update themselves when told to. A host whose agent isn't

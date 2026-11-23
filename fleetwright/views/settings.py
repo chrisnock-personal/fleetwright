@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -295,6 +296,24 @@ async def notification_options(request: Request):
     await db.audit(u["name"], f"Unreachable hosts are now reported after {mins} min")
     flash(request, "Saved.")
     return redirect("/settings/notifications")
+
+
+# ─── Backups and the secret key ─────────────────────────────────────────────
+
+@router.get("/settings/backups", response_class=HTMLResponse)
+async def backups_page(request: Request):
+    require(request, "admin")
+    raw = await db.fetchval("SELECT value FROM settings WHERE key = 'backup_status'")
+    try:
+        status = json.loads(raw) if raw else None
+        if status:
+            status["when"] = datetime.fromisoformat(status["at"].replace("Z", "+00:00"))
+            status["overdue"] = datetime.now(timezone.utc) - status["when"] > timedelta(
+                hours=notify.BACKUP_OVERDUE_HOURS)
+    except (ValueError, KeyError, TypeError):
+        status = None
+    return render(request, "settings_backups.html", section="backups", status=status,
+                  key_status=security.KEY_STATUS, previous=len(config.SECRET_KEY_PREVIOUS))
 
 
 # ─── Users ──────────────────────────────────────────────────────────────────

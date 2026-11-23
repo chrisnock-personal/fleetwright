@@ -49,7 +49,10 @@ async def _credential(host: dict) -> dict:
 
 async def connect(host: dict) -> asyncssh.SSHClientConnection:
     cred = await _credential(host)
-    key = asyncssh.import_private_key(security.decrypt(cred["private_key_enc"]))
+    try:
+        key = asyncssh.import_private_key(security.decrypt(cred["private_key_enc"]))
+    except security.UndecryptableSecret as e:
+        raise SSHFailure(f"SSH key {cred['name']}: {e}") from e
     pinned = host.get("ssh_host_key")
     # (trusted host keys, trusted CA keys, revoked keys): only the pinned key is accepted.
     known = ([asyncssh.import_public_key(pinned)], [], []) if pinned else None

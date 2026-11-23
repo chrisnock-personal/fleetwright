@@ -49,6 +49,12 @@ async def lifespan(_app: FastAPI):
         raise SystemExit(problem)
     await db.open_pool(max_size=20)
     await db.migrate()
+    security.KEY_STATUS = await security.rotate_secrets()
+    if security.KEY_STATUS["reencrypted"]:
+        log.warning("re-encrypted %d stored secrets under the current FLEETWRIGHT_SECRET_KEY; "
+                    "FLEETWRIGHT_SECRET_KEY_PREVIOUS can be removed now", security.KEY_STATUS["reencrypted"])
+    if security.key_problem():
+        log.error(security.key_problem())
     bg = await gateway.startup()
     if not await db.fetchval("SELECT COUNT(*) FROM users"):
         _the_setup_code()

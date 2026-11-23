@@ -8,7 +8,7 @@ import secrets
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 from . import config
 
@@ -30,23 +30,101 @@ def secret_key_problem() -> str | None:
     return None
 
 
-def derived(purpose: str) -> bytes:
+def derived(purpose: str, key: str | None = None) -> bytes:
     problem = secret_key_problem()
     if problem:
         raise ConfigError(problem)
-    return hashlib.sha256(f"fleetwright:{purpose}:{config.SECRET_KEY}".encode()).digest()
+    return hashlib.sha256(f"fleetwright:{purpose}:{key or config.SECRET_KEY}".encode()).digest()
 
 
-def _fernet() -> Fernet:
-    return Fernet(base64.urlsafe_b64encode(derived("secrets")))
+def _fernet_for(key: str) -> Fernet:
+    return Fernet(base64.urlsafe_b64encode(derived("secrets", key)))
+
+
+def _fernet() -> MultiFernet:
+    """Encrypts under the current key; decrypts under it or any previous one."""
+    return MultiFernet([_fernet_for(config.SECRET_KEY)] + [_fernet_for(k) for k in config.SECRET_KEY_PREVIOUS])
 
 
 def encrypt(value: str) -> str:
     return _fernet().encrypt(value.encode()).decode()
 
 
+class UndecryptableSecret(Exception):
+    pass
+
+
 def decrypt(value: str) -> str:
-    return _fernet().decrypt(value.encode()).decode()
+    try:
+        return _fernet().decrypt(value.encode()).decode()
+    except InvalidToken:
+        # InvalidToken carries no message; say what's actually wrong.
+        raise UndecryptableSecret(
+            "this stored secret can't be decrypted with FLEETWRIGHT_SECRET_KEY: the key has changed. "
+            "Put the old key in FLEETWRIGHT_SECRET_KEY_PREVIOUS and restart") from None
+
+
+def under_current_key(token: str) -> bool:
+    try:
+        _fernet_for(config.SECRET_KEY).decrypt(token.encode())
+        return True
+    except InvalidToken:
+        return False
+
+
+def reencrypt(token: str) -> str:
+    """The same secret under the current key. Raises InvalidToken if no known key opens it."""
+    return _fernet().rotate(token.encode()).decode()
+
+
+# What rotate_secrets found at this process's start, for the admin banner.
+KEY_STATUS: dict = {}
+
+
+def key_problem() -> str | None:
+    if KEY_STATUS.get("key_changed") or KEY_STATUS.get("unreadable"):
+        n = KEY_STATUS.get("unreadable", 0)
+        return (f"FLEETWRIGHT_SECRET_KEY has changed, and {n} stored secret{'s' if n != 1 else ''} "
+                "(SSH keys, notification passwords) can't be read with it. Put the old key in "
+                "FLEETWRIGHT_SECRET_KEY_PREVIOUS and restart: FleetWright re-encrypts them under the new one.")
+    return None
+
+
+# Every stored secret: (table, id column, encrypted column).
+ENCRYPTED_COLUMNS = [("ssh_credentials", "id", "private_key_enc"), ("notify_channels", "id", "secret_enc")]
+KEY_CHECK = "secret_key_check"          # settings row: a known value encrypted under the key in use
+
+
+async def rotate_secrets() -> dict:
+    """At startup: re-encrypt whatever isn't under the current key yet, and check that
+    the stored secrets can be read at all. Returns counts for the log and the
+    Settings page: {"reencrypted", "unreadable", "key_changed"}."""
+    from . import db
+    out = {"reencrypted": 0, "unreadable": 0, "key_changed": False}
+    for table, idcol, col in ENCRYPTED_COLUMNS:
+        for row in await db.fetch(f"SELECT {idcol} AS id, {col} AS v FROM {table} WHERE {col} IS NOT NULL"):
+            if under_current_key(row["v"]):
+                continue
+            try:
+                new = reencrypt(row["v"])
+            except InvalidToken:
+                out["unreadable"] += 1
+                continue
+            await db.execute(f"UPDATE {table} SET {col} = %s WHERE {idcol} = %s", new, row["id"])
+            out["reencrypted"] += 1
+    check = await db.fetchval("SELECT value FROM settings WHERE key = %s", KEY_CHECK)
+    if check and not under_current_key(check):
+        try:
+            check = reencrypt(check)
+        except InvalidToken:
+            out["key_changed"] = True
+            check = None
+    if out["key_changed"] or out["unreadable"]:
+        return out   # keep the old check value: it still says which key the data needs
+    await db.execute("""INSERT INTO settings (key, value) VALUES (%s, %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
+                     KEY_CHECK, check or encrypt("fleetwright"))
+    return out
 
 
 def session_secret() -> str:

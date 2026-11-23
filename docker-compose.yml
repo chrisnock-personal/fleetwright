@@ -31,7 +31,8 @@ services:
       POSTGRES_HOST: db
     volumes:
       # The HTTPS certificate and key, kept apart from the database.
-      - certs:/data/certs:Z
+      # :z, shared: the backup service reads it too
+      - certs:/data/certs:z
     ports:
       - "${HTTPS_EXPOSE:-127.0.0.1:8443}:8443"
       - "${HTTP_EXPOSE:-127.0.0.1:8080}:8080"
@@ -49,6 +50,22 @@ services:
     environment:
       POSTGRES_HOST: db
       FLEETWRIGHT_WORKER_NAME: worker-1
+
+  # Opt-in: docker compose --profile backup up -d   (needs BACKUP_AGE_RECIPIENTS in .env)
+  backup:
+    profiles: ["backup"]
+    build: ./backup
+    image: localhost/fleetwright-backup:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups:z
+      - certs:/certs:ro,z
 
 volumes:
   pgdata:

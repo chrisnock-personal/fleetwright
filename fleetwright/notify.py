@@ -22,6 +22,7 @@ import smtplib
 import ssl
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Optional
 
@@ -35,8 +36,9 @@ EVENTS = {
     "unreachable": "A host has been unreachable for a while, and when it's back",
     "approval": "A booked install needs approval",
     "critical": "A critical security update appeared",
+    "backup": "A backup failed, or none has been made for over a day",
 }
-DEFAULT_EVENTS = ["run_failed", "unreachable", "approval", "critical"]
+DEFAULT_EVENTS = ["run_failed", "unreachable", "approval", "critical", "backup"]
 KINDS = {"email": "Email", "webhook": "Webhook", "ntfy": "ntfy"}
 UNREACHABLE_GRACE_DEFAULT = 30          # minutes, a setting on the Notifications page
 MAX_ATTEMPTS = 8                        # 1, 2, 4 … 128 minutes apart: about four hours
@@ -104,7 +106,10 @@ def signature(secret: str, body: bytes) -> str:
 
 def send(channel: dict, msg: dict) -> None:
     cfg = channel["config"] or {}
-    secret = security.decrypt(channel["secret_enc"]) if channel.get("secret_enc") else ""
+    try:
+        secret = security.decrypt(channel["secret_enc"]) if channel.get("secret_enc") else ""
+    except security.UndecryptableSecret as e:
+        raise SendError(str(e)) from e
     kind = channel["kind"]
     if kind == "email":
         _send_email(cfg, secret, msg)
@@ -232,3 +237,34 @@ async def check_unreachable() -> None:
         names = ", ".join(r["name"] for r in back[:20]) + (f" and {len(back) - 20} more" if len(back) > 20 else "")
         await emit("unreachable", f"Reachable again: {names}", "These hosts are answering again.",
                    url(f"/hosts/{back[0]['id']}") if len(back) == 1 else url("/hosts"))
+
+
+# ─── Backups (the worker, once a minute) ────────────────────────────────────
+
+BACKUP_OVERDUE_HOURS = 26
+
+
+async def check_backup() -> None:
+    """The backup service records each attempt in settings.backup_status; tell people
+    once about a failure, and once when backups have stopped altogether."""
+    raw = await db.fetchval("SELECT value FROM settings WHERE key = 'backup_status'")
+    if not raw:
+        return
+    try:
+        st = json.loads(raw)
+        at = datetime.fromisoformat(st["at"].replace("Z", "+00:00"))
+    except (ValueError, KeyError, TypeError):
+        return
+    told = await db.fetchval("SELECT value FROM settings WHERE key = 'backup_notified'")
+    key = None
+    if not st.get("ok"):
+        key = f"failed:{st['at']}"
+        subject, body = "Backup failed", f"The backup at {at:%Y-%m-%d %H:%M} UTC failed: {st.get('message') or '?'}"
+    elif datetime.now(timezone.utc) - at > timedelta(hours=BACKUP_OVERDUE_HOURS):
+        key = f"overdue:{st['at']}"
+        subject, body = "No backup for over a day", (f"The last backup was {st.get('file')} at {at:%Y-%m-%d %H:%M} UTC. "
+                                                     "Is the backup service running?")
+    if key and key != told:
+        await emit("backup", subject, body, url("/settings/backups"), urgent=True)
+        await db.execute("""INSERT INTO settings (key, value) VALUES ('backup_notified', %s)
+                            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""", key)

@@ -12,7 +12,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import fleet
+from . import fleet, security
 
 ROLES = {"admin": "Admin", "operator": "Operator", "viewer": "Viewer"}
 RANK = {"viewer": 0, "operator": 1, "admin": 2}
@@ -158,4 +158,4 @@ def label(status: str) -> str:
 templates.env.filters.update(ago=ago, in_=in_, when=when, num=num, tone=tone, label=label)
 templates.env.globals.update(can=can, qs=qs, ROLES=ROLES, KIND_LABELS=fleet.KIND_LABELS,
                              REBOOT_CHOICES=fleet.REBOOT_CHOICES, WINDOW_CLOSE=fleet.WINDOW_CLOSE,
-                             describe_selection=fleet.describe_selection)
+                             describe_selection=fleet.describe_selection, key_problem=security.key_problem)

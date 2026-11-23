@@ -23,6 +23,9 @@ DATABASE_URL = os.getenv(
     ),
 )
 SECRET_KEY = os.getenv("FLEETWRIGHT_SECRET_KEY", "")
+# Earlier secret keys, comma-separated, while rotating: stored secrets encrypted under
+# one of these still decrypt, and are re-encrypted under SECRET_KEY at startup.
+SECRET_KEY_PREVIOUS = [k.strip() for k in os.getenv("FLEETWRIGHT_SECRET_KEY_PREVIOUS", "").split(",") if k.strip()]
 # HTTPS is on by default (self-signed on first start; upload your own under Settings).
 # "off" serves plain HTTP for running behind a TLS proxy.
 TLS_ON = os.getenv("FLEETWRIGHT_TLS", "on").lower() not in ("0", "off", "false", "no")
