@@ -120,7 +120,8 @@ async def run_control(request: Request, run_id: int):
         hosts = [r["host_id"] for r in await db.fetch(
             "SELECT host_id FROM tasks WHERE run_id = %s AND status = 'failed'", run_id)]
         if hosts:
-            new_id = await fleet.create_run(kind=run["kind"], title=f"{run['title']} (retry)", actor=u["name"],
+            new_id = await fleet.create_run(kind=run["kind"], title=run["title"].removesuffix(" (retry)") + " (retry)",
+                                            actor=u["name"],
                                             host_ids=hosts, selection=run["selection"], reboot=run["reboot"],
                                             batch_size=run["batch_size"], max_failures=run["max_failures"])
             return redirect(f"/runs/{new_id}")

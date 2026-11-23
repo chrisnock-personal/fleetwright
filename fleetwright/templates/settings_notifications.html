@@ -35,11 +35,11 @@
   {% if channels %}
   <div>
   {% for c in channels %}
-    <div class="hist" style="align-items:flex-start">
-      <div style="flex:1">
-        <strong>{{ c.name }}</strong> <span class="badge muted">{{ kinds[c.kind] }}</span>{% if not c.enabled %} <span class="badge muted">Off</span>{% endif %}
-        <span class="detail">{{ c.config.to if c.kind == 'email' else c.config.url }} · {% for e in c.events %}{{ events.get(e, e) }}{{ '; ' if not loop.last }}{% endfor %}</span>
-        <span class="detail">{% if c.last_error %}<span class="tone-bad">Last attempt failed: {{ c.last_error }}</span>{% elif c.last_sent_at %}Last sent {{ c.last_sent_at|ago }}{% else %}Nothing sent yet{% endif %}{% if c.queued %} · {{ c.queued }} waiting{% endif %}</span>
+    <div class="chan">
+      <div class="chan-main">
+        <div class="chan-name"><strong>{{ c.name }}</strong> <span class="badge muted">{{ kinds[c.kind] }}</span>{% if not c.enabled %} <span class="badge muted">Off</span>{% endif %}</div>
+        <span class="chan-detail">{{ c.config.to if c.kind == 'email' else c.config.url }} · {% for e in c.events %}{{ events.get(e, e) }}{{ '; ' if not loop.last }}{% endfor %}</span>
+        <span class="chan-detail">{% if c.last_error %}<span class="tone-bad">Last attempt failed: {{ c.last_error }}</span>{% elif c.last_sent_at %}Last sent {{ c.last_sent_at|ago }}{% else %}Nothing sent yet{% endif %}{% if c.queued %} · {{ c.queued }} waiting{% endif %}</span>
         <details class="more" style="margin-top:8px"><summary>Edit</summary>
           <form method="post" action="/settings/notifications" style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
             {{ csrf_field() }}<input type="hidden" name="id" value="{{ c.id }}">
@@ -50,11 +50,13 @@
           </form>
         </details>
       </div>
-      <form method="post" action="/settings/notifications/{{ c.id }}/action" class="actions-row">{{ csrf_field() }}
-        <button class="btn small" type="submit" name="action" value="test">Send test</button>
-        <button class="btn small" type="submit" name="action" value="{{ 'disable' if c.enabled else 'enable' }}">{{ 'Turn off' if c.enabled else 'Turn on' }}</button>
-      </form>
-      <form method="post" action="/settings/notifications/{{ c.id }}/action" data-confirm="Delete the channel {{ c.name }}?">{{ csrf_field() }}<button class="btn small danger" type="submit" name="action" value="delete">Delete</button></form>
+      <div class="actions-row">
+        <form method="post" action="/settings/notifications/{{ c.id }}/action" class="actions-row">{{ csrf_field() }}
+          <button class="btn small" type="submit" name="action" value="test">Send test</button>
+          <button class="btn small" type="submit" name="action" value="{{ 'disable' if c.enabled else 'enable' }}">{{ 'Turn off' if c.enabled else 'Turn on' }}</button>
+        </form>
+        <form method="post" action="/settings/notifications/{{ c.id }}/action" data-confirm="Delete the channel {{ c.name }}?">{{ csrf_field() }}<button class="btn small danger" type="submit" name="action" value="delete">Delete</button></form>
+      </div>
     </div>
   {% endfor %}
   </div>

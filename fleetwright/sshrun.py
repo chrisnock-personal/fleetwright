@@ -65,7 +65,9 @@ async def connect(host: dict) -> asyncssh.SSHClientConnection:
             "connected, so nothing was sent. If the host was rebuilt, use “Forget pinned host key” "
             "on its page; otherwise investigate.") from e
     except (OSError, asyncssh.Error, asyncio.TimeoutError) as e:
-        raise SSHFailure(f"Can't connect to {host['address']}:{host['port']}: {e or type(e).__name__}") from e
+        # A connect timeout's message is empty: say what happened instead of printing nothing.
+        why = str(e) or ("timed out" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else type(e).__name__)
+        raise SSHFailure(f"Can't connect to {host['address']}:{host['port']}: {why}") from e
     seen = conn.get_server_host_key().export_public_key().decode().strip()
     if not pinned:
         await db.execute("UPDATE hosts SET ssh_host_key = %s WHERE id = %s AND ssh_host_key IS NULL",

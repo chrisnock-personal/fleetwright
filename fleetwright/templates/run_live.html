@@ -26,7 +26,7 @@
     <div>
       {% for t in tasks %}
       <a class="hrow {{ 'sel' if task and t.id == task.id }}" href="/runs/{{ run.id }}?task={{ t.id }}&batch={{ batch }}">
-        <div><span class="n">{{ t.name }}</span><span class="d">{{ t.detail or ('waiting for its batch' if t.status == 'waiting' else ('queued' if t.status == 'queued' else '')) }}{% if t.changed %} · {{ t.changed }} changed{% endif %}</span></div>
+        <div><span class="n">{{ t.name }}</span><span class="d">{{ t.detail or ('waiting for its batch' if t.status == 'waiting' else ('queued' if t.status == 'queued' else '')) }}{% if t.changed and not t.detail %} · {{ t.changed }} changed{% endif %}</span></div>
         <span class="badge {{ t.status|tone }}">{{ 'Rebooting' if t.detail == 'rebooting' and t.status == 'running' else t.status|label }}</span>
       </a>
       {% endfor %}

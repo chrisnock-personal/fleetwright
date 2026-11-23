@@ -229,7 +229,8 @@ async def notify_run(run: dict, status: str, note: Optional[str]) -> None:
     bad = status in ("failed", "stopped") or failed > 0
     what = {"failed": "failed", "stopped": "stopped early"}.get(status) or \
         (f"{failed} host{'s' if failed != 1 else ''} failed" if failed else "done")
-    lines = [note] if note else []
+    # "2 hosts failed" says no more than the counts below it; "Stopped after 2 failed hosts" does.
+    lines = [note] if note and not note.endswith(" failed") else []
     lines.append(", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "no hosts")
     if failed:
         for r in await db.fetch("""SELECT h.name, t.detail FROM tasks t JOIN hosts h ON h.id = t.host_id

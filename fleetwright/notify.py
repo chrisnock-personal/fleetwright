@@ -225,7 +225,7 @@ async def check_unreachable() -> None:
         await emit("unreachable",
                    f"{len(gone)} host{'s' if len(gone) != 1 else ''} unreachable: {names}" if len(gone) > 1
                    else f"{gone[0]['name']} is unreachable",
-                   f"Unreachable for more than {grace} minutes.\n" + "\n".join(lines),
+                   f"Unreachable for more than {grace} minute{'s' if grace != 1 else ''}.\n" + "\n".join(lines),
                    url("/hosts?status=unreachable") if len(gone) > 1 else url(f"/hosts/{gone[0]['id']}"),
                    urgent=True)
     if back:

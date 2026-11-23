@@ -350,6 +350,12 @@ h1.hostname { font-family: var(--mono); font-weight: 500; font-size: 28px; lette
 .hist a { font-size: 14px; font-weight: 500; color: var(--text); text-decoration: none; }
 .hist a:hover { text-decoration: underline; }
 .hist .detail { font-size: 13px; color: var(--text2); overflow-wrap: anywhere; }
+/* Notification channels: a name row, details, an edit form, and the actions on the right. */
+.chan { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 20px; border-top: 1px solid var(--border); }
+.chan:first-child { border-top: 0; }
+.chan-main { flex: 1 1 420px; min-width: 0; }
+.chan-name { display: flex; align-items: center; gap: 8px; }
+.chan-detail { display: block; margin-top: 3px; font-size: 13px; color: var(--text2); overflow-wrap: anywhere; }
 .batches { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .batch { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; text-decoration: none; color: var(--text); }
 .batch.cur { border-color: var(--accent); }
