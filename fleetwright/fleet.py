@@ -13,7 +13,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
-from . import db
+from . import db, notify
 from .db import J
 from .schedule import next_run
 
@@ -212,12 +212,34 @@ async def _skip_rest(run_id: int, why: str) -> None:
 
 
 async def _finish(run: dict, status: str, note: Optional[str]) -> None:
-    await db.execute("UPDATE runs SET status = %s, note = %s, finished_at = NOW() WHERE id = %s "
-                     "AND status IN ('running', 'paused')", status, note, run["id"])
+    n = await db.execute("UPDATE runs SET status = %s, note = %s, finished_at = NOW() WHERE id = %s "
+                         "AND status IN ('running', 'paused')", status, note, run["id"])
     if run["booking_id"]:
         await db.execute("UPDATE bookings SET status = 'done' WHERE id = %s AND status = 'started'",
                          run["booking_id"])
     log.info("run %s %s%s", run["id"], status, f": {note}" if note else "")
+    if n:
+        await notify_run(run, status, note)
+
+
+async def notify_run(run: dict, status: str, note: Optional[str]) -> None:
+    counts = {r["status"]: r["n"] for r in await db.fetch(
+        "SELECT status, COUNT(*) AS n FROM tasks WHERE run_id = %s GROUP BY status", run["id"])}
+    failed = counts.get("failed", 0)
+    bad = status in ("failed", "stopped") or failed > 0
+    what = {"failed": "failed", "stopped": "stopped early"}.get(status) or \
+        (f"{failed} host{'s' if failed != 1 else ''} failed" if failed else "done")
+    lines = [note] if note else []
+    lines.append(", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "no hosts")
+    if failed:
+        for r in await db.fetch("""SELECT h.name, t.detail FROM tasks t JOIN hosts h ON h.id = t.host_id
+                                    WHERE t.run_id = %s AND t.status = 'failed' ORDER BY h.name LIMIT 10""",
+                                run["id"]):
+            lines.append(f"{r['name']}: {(r['detail'] or 'failed').splitlines()[0][:160]}")
+        if failed > 10:
+            lines.append(f"… and {failed - 10} more")
+    await notify.emit("run_failed" if bad else "run_done", f"Run #{run['id']} {run['title']}: {what}",
+                      "\n".join(lines), notify.url(f"/runs/{run['id']}"), urgent=bad)
 
 
 async def abort_run(run_id: int, actor: str) -> None:
@@ -247,6 +269,10 @@ async def schedule_tick() -> None:
             continue
         if t >= window_end:
             log.warning("policy %s missed its window (worker was down)", p["name"])
+            await notify.emit("run_failed", f"Policy {p['name']} missed its window",
+                              f"It was due at {p['next_run_at']:%Y-%m-%d %H:%M} UTC, but no worker was "
+                              "running until after its window closed. It runs again at its next time.",
+                              notify.url(f"/schedules/policies/{p['id']}"), urgent=True)
             continue
         host_ids = await resolve_target(p["target"])
         if not host_ids:
@@ -262,8 +288,12 @@ async def schedule_tick() -> None:
                                  AND window_start <= NOW()"""):
         if b["window_end"] <= t or (b["needs_approval"] and not b["approved_by"]):
             await db.execute("UPDATE bookings SET status = 'missed' WHERE id = %s", b["id"])
-            await db.audit("schedule", f"Booked install '{b['title']}' missed its window"
-                           + (" (not approved)" if b["needs_approval"] and not b["approved_by"] else ""))
+            why = " (not approved)" if b["needs_approval"] and not b["approved_by"] else ""
+            await db.audit("schedule", f"Booked install '{b['title']}' missed its window{why}")
+            await notify.emit("run_failed", f"Booked install {b['title']} didn't run{why}",
+                              "Nobody approved it before its window opened." if why else
+                              "Its window closed before a worker could start it.",
+                              notify.url("/schedules"), urgent=True)
             continue
         claimed = await db.execute("UPDATE bookings SET status = 'started' WHERE id = %s "
                                    "AND status IN ('booked', 'needs_approval')", b["id"])
@@ -297,6 +327,10 @@ async def record_scan(host_id: int, result: dict) -> None:
     if result.get("facts"):
         await record_facts(host_id, result["facts"])
     pending = result.get("pending") or []
+    known = {(r["name"], r["advisory"]) for r in await db.fetch(
+        "SELECT name, advisory FROM pending_updates WHERE host_id = %s AND severity = 'critical'", host_id)}
+    new_critical = sorted({(p["name"], p.get("advisory")) for p in pending
+                           if p.get("severity") == "critical" and p.get("current") is not None} - known)
     async with db.transaction() as conn:
         await conn.execute("DELETE FROM pending_updates WHERE host_id = %s", (host_id,))
         if pending:
@@ -317,6 +351,14 @@ async def record_scan(host_id: int, result: dict) -> None:
         if "auto_updates" in result:
             await conn.execute("UPDATE hosts SET auto_updates = %s WHERE id = %s",
                                (J(result["auto_updates"]), host_id))
+    if new_critical:
+        name = await db.fetchval("SELECT name FROM hosts WHERE id = %s", host_id)
+        advisories = sorted({a or n for n, a in new_critical})
+        await notify.emit("critical", f"Critical update on {name}: {', '.join(advisories[:3])}"
+                          + (f" +{len(advisories) - 3}" if len(advisories) > 3 else ""),
+                          "New critical security updates waiting:\n"
+                          + "\n".join(f"{n} ({a})" if a else n for n, a in new_critical[:15]),
+                          notify.url(f"/hosts/{host_id}?kind=security"), urgent=True)
 
 
 async def record_changes(task_id: Optional[int], host_id: int, changes: list[dict]) -> None:

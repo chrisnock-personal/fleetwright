@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
-from .. import db, fleet, pkgops
+from .. import db, fleet, notify, pkgops
 from ..db import J
 from ..schedule import WEEKDAYS, describe, next_run
 from ..webcommon import as_list, flash, form_data, redirect, render, require, split_words
@@ -355,6 +355,12 @@ async def book(request: Request):
         needs, "needs_approval" if needs else "booked", u["name"])
     request.session.pop("book_pins", None)
     await db.audit(u["name"], f"Booked install #{bid} '{title}' for {ws:%d %b %H:%M}–{we:%H:%M} UTC")
+    if needs:
+        await notify.emit("approval", f"Booked install {title} needs approval",
+                          f"{u['name']} booked it for {ws:%a %d %b %H:%M}–{we:%H:%M} UTC: "
+                          f"{await fleet.describe_target(target)} · {fleet.describe_selection(selection)}. "
+                          "An admin has to approve it before the window opens, or it won't run.",
+                          notify.url("/schedules#bookings"))
     flash(request, f"Booked for {ws:%a %d %b %H:%M}–{we:%H:%M} UTC."
           + (" It needs an admin's approval before then." if needs else ""))
     return redirect("/schedules#bookings")

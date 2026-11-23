@@ -72,7 +72,8 @@
       box.dispatchEvent(new Event("selection", { bubbles: true }));
     });
   });
-  // data-show-if="name=value": show a field only while that radio or select has that value.
+  // data-show-if="name=value" (or "name!=value"): show a field only while that radio or select has
+  // (or hasn't) that value.
   (function () {
     var deps = document.querySelectorAll("[data-show-if]");
     if (!deps.length) return;
@@ -82,8 +83,9 @@
     }
     function update() {
       deps.forEach(function (d) {
-        var parts = d.dataset.showIf.split("="), v = current(parts[0]);
-        d.hidden = v !== null && v !== parts[1];
+        var not = d.dataset.showIf.indexOf("!=") > 0;
+        var parts = d.dataset.showIf.split(not ? "!=" : "="), v = current(parts[0]);
+        d.hidden = v !== null && (not ? v === parts[1] : v !== parts[1]);
       });
     }
     document.addEventListener("change", update);

@@ -235,3 +235,38 @@ CREATE TABLE IF NOT EXISTS bookings (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_bookings_window ON bookings (status, window_start);
+
+-- Notifications (notify.py). One channel: where to send and which events it wants.
+-- config: email {host, port, security: starttls|ssl|none, username, from, to}; webhook and
+-- ntfy {url}. secret_enc: the SMTP password, the webhook signing secret or the ntfy token.
+CREATE TABLE IF NOT EXISTS notify_channels (
+    id            SERIAL PRIMARY KEY,
+    name          TEXT UNIQUE NOT NULL,
+    kind          TEXT NOT NULL,                       -- email | webhook | ntfy
+    config        JSONB NOT NULL DEFAULT '{}',
+    secret_enc    TEXT,
+    events        TEXT[] NOT NULL DEFAULT '{run_failed,unreachable,approval,critical}',
+    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    last_sent_at  TIMESTAMPTZ,
+    last_error    TEXT,
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notify_outbox (
+    id          BIGSERIAL PRIMARY KEY,
+    channel_id  INTEGER NOT NULL REFERENCES notify_channels (id) ON DELETE CASCADE,
+    event       TEXT NOT NULL,
+    subject     TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '',
+    link        TEXT,
+    urgent      BOOLEAN NOT NULL DEFAULT FALSE,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    next_try    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at     TIMESTAMPTZ,                           -- 'epoch': given up
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_due ON notify_outbox (next_try) WHERE sent_at IS NULL;
+
+-- Set once a host has been reported unreachable, cleared (and reported) when it's back.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS unreachable_notified BOOLEAN NOT NULL DEFAULT FALSE;

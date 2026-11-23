@@ -90,6 +90,22 @@ otherwise.
   *Schedule an install*. Optional admin approval; if the window opens
   unapproved, it's missed rather than run.
 
+## Notifications
+
+**Settings → Notifications** sends a message by email (SMTP), webhook or
+[ntfy](https://ntfy.sh) when a run fails, stops early or misses its window, a
+host stays unreachable (for 30 minutes by default) and when it's back, a booked
+install needs approval, or a critical security update appears; optionally also
+when a run finishes cleanly. Each channel picks its events and has a *Send
+test* button. Messages that pile up for a channel within a few seconds go out
+as one, so an outage across many hosts is one message. A failed send is
+retried with a growing delay for about four hours, and the channel shows the
+error. Webhooks get a JSON POST whose `text` field also makes it a Slack or
+Mattermost message; with a signing secret, each carries
+`X-FleetWright-Signature: sha256=<HMAC-SHA256 of the body>`. ntfy messages
+about problems are high priority. Passwords, secrets and tokens are stored
+encrypted. Links in messages use `FLEETWRIGHT_PUBLIC_URL`.
+
 ## Updating agents
 
 Agents from 0.3.0 on update themselves when told to. A host whose agent isn't

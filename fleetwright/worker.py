@@ -10,6 +10,7 @@ work through Postgres.
   moves runs from batch to batch (one worker at a time does this)
 - queues a scan for SSH hosts not scanned for FLEETWRIGHT_SCAN_INTERVAL_MIN
 - fails tasks that have been running far too long (a worker that died)
+- sends notifications (notify.py), and notices hosts that stay unreachable
 """
 
 from __future__ import annotations
@@ -21,11 +22,12 @@ import time
 
 import psycopg
 
-from . import config, db, fleet, sshrun
+from . import config, db, fleet, notify, sshrun
 
 log = logging.getLogger("fleetwright.worker")
 
 SCHEDULER_LOCK = 42424243
+NOTIFY_LOCK = 42424244
 
 
 class TaskLog:
@@ -192,10 +194,28 @@ class Worker:
                                 last_scan_check = time.monotonic()
                                 await self.due_scans()
                                 await self.sweep()
+                                await notify.check_unreachable()
                         finally:
                             await conn.execute("SELECT pg_advisory_unlock(%s)", (SCHEDULER_LOCK,))
             except Exception:  # noqa: BLE001
                 log.exception("housekeeping failed")
+            await asyncio.sleep(5)
+
+    async def notifier(self) -> None:
+        """Sends queued notifications, apart from housekeeping so a slow mail server
+        can't hold up schedules; one worker at a time."""
+        while not self.stopping:
+            try:
+                async with db.pool().connection() as conn:
+                    got = (await (await conn.execute("SELECT pg_try_advisory_lock(%s) AS ok",
+                                                     (NOTIFY_LOCK,))).fetchone())["ok"]
+                    if got:
+                        try:
+                            await notify.deliver()
+                        finally:
+                            await conn.execute("SELECT pg_advisory_unlock(%s)", (NOTIFY_LOCK,))
+            except Exception:  # noqa: BLE001
+                log.exception("sending notifications failed")
             await asyncio.sleep(5)
 
     async def due_scans(self) -> None:
@@ -246,7 +266,8 @@ class Worker:
         await db.open_pool(max_size=max(10, config.SSH_CONCURRENCY // 2))
         await db.migrate()
         await self.recover()
-        bg = [asyncio.create_task(self.listen()), asyncio.create_task(self.housekeeping())]
+        bg = [asyncio.create_task(self.listen()), asyncio.create_task(self.housekeeping()),
+              asyncio.create_task(self.notifier())]
         log.info("worker %s ready (up to %d SSH tasks at once)", config.WORKER_NAME, config.SSH_CONCURRENCY)
         while not self.stopping:
             try:

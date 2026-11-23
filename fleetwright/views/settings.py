@@ -11,8 +11,9 @@ import asyncssh
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from .. import config, db, gateway, security, tls
-from ..webcommon import ROLES, flash, form_data, redirect, render, require, split_words
+from .. import config, db, gateway, notify, security, tls
+from ..db import J
+from ..webcommon import ROLES, as_list, flash, form_data, redirect, render, require, split_words
 
 router = APIRouter()
 log = logging.getLogger("fleetwright.settings")
@@ -181,6 +182,119 @@ async def token_revoke(request: Request, tid: int):
     await db.audit(u["name"], f"Revoked enrolment token #{tid}")
     flash(request, "Revoked. Agents already enrolled with it keep working.", "info")
     return redirect("/settings/agents")
+
+
+# ─── Notifications ──────────────────────────────────────────────────────────
+
+@router.get("/settings/notifications", response_class=HTMLResponse)
+async def notifications_page(request: Request):
+    require(request, "admin")
+    channels = await db.fetch("""SELECT c.*, (SELECT COUNT(*) FROM notify_outbox o WHERE o.channel_id = c.id
+                                              AND o.sent_at IS NULL) AS queued
+                                   FROM notify_channels c ORDER BY name""")
+    grace = await db.fetchval("SELECT value FROM settings WHERE key = 'notify_unreachable_min'")
+    return render(request, "settings_notifications.html", channels=channels, section="notifications",
+                  events=notify.EVENTS, kinds=notify.KINDS, default_events=notify.DEFAULT_EVENTS,
+                  grace=int(grace or notify.UNREACHABLE_GRACE_DEFAULT), public_url=config.PUBLIC_URL)
+
+
+def _channel_config(kind: str, form) -> tuple[dict, list[str]]:
+    errors = []
+    if kind == "email":
+        cfg = {k: str(form.get(k, "")).strip() for k in ("host", "port", "security", "username", "from", "to")}
+        if cfg["security"] not in ("starttls", "ssl", "none"):
+            cfg["security"] = "starttls"
+        if cfg["port"] and not cfg["port"].isdigit():
+            errors.append("The SMTP port is a number.")
+        if not cfg["host"] or not cfg["from"] or not cfg["to"]:
+            errors.append("An email channel needs an SMTP server, a From address and a To address.")
+    else:
+        cfg = {"url": str(form.get("url", "")).strip()}
+        if not cfg["url"].startswith(("https://", "http://")):
+            errors.append("The URL must start with https:// (or http://).")
+    return cfg, errors
+
+
+@router.post("/settings/notifications")
+async def channel_save(request: Request):
+    form = await form_data(request)
+    u = require(request, "admin")
+    cid = int(form["id"]) if str(form.get("id", "")).isdigit() else None
+    old = await db.fetchone("SELECT * FROM notify_channels WHERE id = %s", cid) if cid else None
+    kind = old["kind"] if old else str(form.get("kind", ""))
+    name = str(form.get("name", "")).strip()[:80]
+    events = [e for e in as_list(form.get("events")) if e in notify.EVENTS]
+    cfg, errors = _channel_config(kind, form) if kind in notify.KINDS else ({}, ["Choose email, webhook or ntfy."])
+    if not name:
+        errors.append("Give the channel a name.")
+    if not events:
+        errors.append("Tick at least one thing to be told about.")
+    if errors:
+        flash(request, " ".join(errors), "bad")
+        return redirect("/settings/notifications")
+    secret = str(form.get("secret", ""))
+    secret_enc = security.encrypt(secret) if secret else (old["secret_enc"] if old and not form.get("clear_secret")
+                                                         else None)
+    try:
+        if old:
+            await db.execute("""UPDATE notify_channels SET name = %s, config = %s, secret_enc = %s, events = %s
+                                 WHERE id = %s""", name, J(cfg), secret_enc, events, cid)
+            await db.audit(u["name"], f"Changed notification channel '{name}'")
+        else:
+            await db.execute("""INSERT INTO notify_channels (name, kind, config, secret_enc, events, created_by)
+                                VALUES (%s, %s, %s, %s, %s, %s)""", name, kind, J(cfg), secret_enc, events, u["name"])
+            await db.audit(u["name"], f"Added {kind} notification channel '{name}'")
+    except Exception as e:  # noqa: BLE001
+        if "unique" in str(e).lower():
+            flash(request, f"There's already a channel called {name}.", "bad")
+            return redirect("/settings/notifications")
+        raise
+    flash(request, "Saved. Use “Send test” to check it.")
+    return redirect("/settings/notifications")
+
+
+@router.post("/settings/notifications/{cid}/action")
+async def channel_action(request: Request, cid: int):
+    form = await form_data(request)
+    u = require(request, "admin")
+    c = await db.fetchone("SELECT * FROM notify_channels WHERE id = %s", cid)
+    if not c:
+        raise HTTPException(404)
+    action = form.get("action")
+    if action == "test":
+        try:
+            await notify.send_test(c)
+        except Exception as e:  # noqa: BLE001 - shown to the admin
+            await db.execute("UPDATE notify_channels SET last_error = %s WHERE id = %s", str(e)[:500], cid)
+            flash(request, f"The test to {c['name']} failed: {e}", "bad")
+        else:
+            await db.execute("UPDATE notify_channels SET last_sent_at = NOW(), last_error = NULL WHERE id = %s", cid)
+            flash(request, f"Sent a test to {c['name']}.")
+    elif action in ("enable", "disable"):
+        await db.execute("UPDATE notify_channels SET enabled = %s WHERE id = %s", action == "enable", cid)
+        await db.audit(u["name"], f"{'Enabled' if action == 'enable' else 'Disabled'} notification channel '{c['name']}'")
+    elif action == "delete":
+        await db.execute("DELETE FROM notify_channels WHERE id = %s", cid)
+        await db.audit(u["name"], f"Deleted notification channel '{c['name']}'")
+        flash(request, f"Deleted {c['name']}.", "info")
+    else:
+        raise HTTPException(400, "Unknown action")
+    return redirect("/settings/notifications")
+
+
+@router.post("/settings/notifications/options")
+async def notification_options(request: Request):
+    form = await form_data(request)
+    u = require(request, "admin")
+    mins = str(form.get("grace", ""))
+    if not mins.isdigit() or not 1 <= int(mins) <= 10080:
+        flash(request, "Give the wait in minutes, 1 to 10080.", "bad")
+        return redirect("/settings/notifications")
+    await db.execute("""INSERT INTO settings (key, value) VALUES ('notify_unreachable_min', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""", mins)
+    await db.audit(u["name"], f"Unreachable hosts are now reported after {mins} min")
+    flash(request, "Saved.")
+    return redirect("/settings/notifications")
 
 
 # ─── Users ──────────────────────────────────────────────────────────────────
