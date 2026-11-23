@@ -256,7 +256,9 @@ async def host_page(request: Request, host_id: int, kind: str = "all"):
     policies = await db.fetch("SELECT id, name, enabled, target FROM policies ORDER BY name")
     applies = [p for p in policies if host_id in await fleet.resolve_target(p["target"])] if policies else []
     server_agent = gateway.agent_bundle()
-    return render(request, "host.html", h=h, server_agent=server_agent, pending=shown, counts=counts, kind=kind, new_pkgs=new_pkgs,
+    twins = await db.fetch("SELECT id, name FROM hosts WHERE machine_id = %s AND id <> %s ORDER BY name",
+                           h["machine_id"], host_id) if h["machine_id"] else []
+    return render(request, "host.html", h=h, server_agent=server_agent, twins=twins, pending=shown, counts=counts, kind=kind, new_pkgs=new_pkgs,
                   history=history, changes=changes, active_task=active, policies=applies, **await _choices())
 
 

@@ -84,3 +84,50 @@ def test_already_current_does_nothing(installed, monkeypatch):
     current = {n: (installed / n).read_bytes() for n in agent.BUNDLE_FILES}
     result = agent.self_update(CFG, _offer(current), lambda _l: None)
     assert result == {"ok": True, "restarting": False}
+
+
+# ─── Telling a reinstall from a cloned machine ─────────────────────────────
+
+def _host(i, name, boot, connected, hostname=None):
+    return {"id": i, "name": name, "boot_id": boot, "agent_connected": connected, "hostname": hostname}
+
+
+def test_reinstall_on_the_running_machine_keeps_its_host():
+    # install.sh enrols while the old agent is still connected, from the same boot
+    web1 = _host(1, "web1", "boot-a", True, "web1")
+    assert gateway.same_machine({"boot_id": "boot-a"}, "web1", [web1]) is web1
+
+
+def test_reinstall_after_a_reboot_with_the_old_agent_offline_keeps_its_host():
+    web1 = _host(1, "web1", "boot-a", False, "web1")
+    assert gateway.same_machine({"boot_id": "boot-b"}, "web1", [web1]) is web1
+    renamed = _host(1, "frontend-1", "boot-a", False, "web1")   # renamed in FleetWright
+    assert gateway.same_machine({"boot_id": "boot-b"}, "web1", [renamed]) is renamed
+
+
+def test_a_clone_gets_a_host_of_its_own():
+    original = _host(1, "web1", "boot-a", True, "web1")
+    # live original: even the same hostname doesn't make it the same machine
+    assert gateway.same_machine({"boot_id": "boot-c"}, "web1", [original]) is None
+    offline = _host(1, "web1", "boot-a", False, "web1")
+    assert gateway.same_machine({"boot_id": "boot-c"}, "web2", [offline]) is None
+
+
+def test_containers_sharing_a_kernel_and_a_machine_id_stay_apart():
+    # every container on one kernel reports the same boot id
+    web1 = _host(1, "web1", "kernel-boot", True, "web1")
+    assert gateway.same_machine({"boot_id": "kernel-boot"}, "web2", [web1]) is None
+
+
+def test_a_reinstall_on_the_second_of_two_clones_finds_the_right_one():
+    a = _host(1, "web1", "boot-a", True, "web1")
+    b = _host(2, "web2", "boot-b", True, "web2")
+    assert gateway.same_machine({"boot_id": "boot-b"}, "web2", [a, b]) is b
+
+
+def test_two_machines_sharing_one_identity():
+    assert gateway.shared_identity([("a", 0), ("b", 5), ("a", 10)])
+    assert not gateway.shared_identity([("a", 0), ("b", 5)])                 # a reboot
+    assert not gateway.shared_identity([("a", 0), ("a", 5), ("a", 10)])      # reconnects
+    assert not gateway.shared_identity([("a", 0), ("b", 5), ("c", 10)])      # reboots
+    assert not gateway.shared_identity([("a", 0), ("b", 5), ("a", 4000)])    # too far apart

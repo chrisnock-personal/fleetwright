@@ -76,6 +76,9 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;
 -- The agent's files as one id (agents from 0.3.0 report it); compared with the server's
 -- to tell an outdated agent. NULL: an older agent, which can't update itself.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_bundle TEXT;
+-- The hostname the machine reports (the host's name in FleetWright can be changed);
+-- one of the ways a reinstall is told from a cloned machine.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS hostname TEXT;
 CREATE INDEX IF NOT EXISTS idx_hosts_group ON hosts (group_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_machine ON hosts (machine_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_tags ON hosts USING GIN (tags);

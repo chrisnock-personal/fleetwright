@@ -34,6 +34,9 @@
   </div>
 
   {% if h.last_error %}<div class="flash bad" role="alert"><div><strong>Last attempt failed.</strong> <span class="mono" style="white-space:pre-wrap">{{ h.last_error }}</span></div></div>{% endif %}
+  {% if twins %}<div class="flash warn" role="status"><div><strong>Same machine id as {% for t in twins %}<a href="/hosts/{{ t.id }}">{{ t.name }}</a>{{ ', ' if not loop.last }}{% endfor %}.</strong>
+    Each machine should have its own <span class="mono">/etc/machine-id</span>; clones made from one image often don't. FleetWright keeps them apart, but give each its own
+    (<span class="mono">rm /etc/machine-id; systemd-machine-id-setup</span>, then reboot) so a reinstall can always be matched to the right host.</div></div>{% endif %}
   {% set autos = (h.auto_updates or [])|selectattr('installs')|list %}
   {% if autos %}<div class="flash warn" role="status"><div><strong>Updates are also installed outside FleetWright.</strong>
     {% for a in autos %}<span class="mono">{{ a.tool }}</span> {{ a.detail }}{{ '; ' if not loop.last else '.' }}{% endfor %}

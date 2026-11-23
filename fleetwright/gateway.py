@@ -20,6 +20,7 @@ import json
 import logging
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -73,10 +74,40 @@ class AgentConn:
 
 
 connected: dict[int, AgentConn] = {}
+# Each host's recent hellos (which machine, time), to spot two machines sharing one identity.
+recent_boots: dict[int, list[tuple[str, float]]] = {}
+SHARED_TOKEN = ("Two machines are using this host's agent identity and keep replacing each other's "
+                "connection: one is probably a clone made after the agent was installed. On the clone, "
+                "give it its own /etc/machine-id, delete /etc/fleetwright-agent and run the install command.")
+
+
+def shared_identity(seen: list[tuple[str, float]], window: float = 600) -> bool:
+    """Hellos alternating between two machines (A, B, A) within the window. A machine is
+    its boot id, hostname and address together: containers on one kernel share a boot
+    id. A reboot or a new address goes A → B and doesn't come back; a reconnect stays on A."""
+    if len(seen) < 3:
+        return False
+    (a, ta), (b, _), (c, tc) = seen[-3:]
+    return a == c != b and tc - ta <= window
 _wake = asyncio.Event()
 
 
 # ─── Enrolment and the install script ───────────────────────────────────────
+
+def same_machine(facts: dict, hostname: str, candidates: list[dict]) -> Optional[dict]:
+    """Which of the agent hosts sharing this /etc/machine-id (if any) the enrolling
+    machine is. A reinstall has the same hostname and, while its old agent is still
+    connected (install.sh enrols before restarting it), the same boot. Anything else
+    sharing the id is a cloned machine (a VM template, an image whose machine-id
+    wasn't regenerated) and gets a host of its own rather than taking this one over.
+    Not the boot id alone: containers on one kernel all report the kernel's."""
+    boot = facts.get("boot_id")
+    for c in candidates:
+        if (c.get("hostname") or c.get("name")) != hostname:
+            continue
+        if not c.get("agent_connected") or (boot and c.get("boot_id") == boot):
+            return c
+    return None
 
 @router.post("/api/agent/enroll")
 async def enroll(request: Request):
@@ -95,22 +126,31 @@ async def enroll(request: Request):
         hostname = str(facts.get("address") or (request.client.host if request.client else "host"))
     name = NAME_OK.sub("-", hostname)[:120].strip("-") or "host"
     agent_token = security.new_token()
-    existing = None
-    if facts.get("machine_id"):
+    reuse, clone_of = None, None
+    machine_id = str(facts.get("machine_id") or "")
+    if machine_id:
         # The same machine enrolling again (a reinstall) keeps its host, name and history.
-        existing = await db.fetchone("SELECT id, mode, name FROM hosts WHERE machine_id = %s AND mode = 'agent'",
-                                     str(facts["machine_id"]))
-        if existing:
-            name = existing["name"]
-    existing = existing or await db.fetchone("SELECT id, mode FROM hosts WHERE name = %s", name)
-    if existing and existing["mode"] == "agent":
-        host_id = existing["id"]
+        candidates = await db.fetch("""SELECT id, name, hostname, boot_id, agent_connected FROM hosts
+                                        WHERE machine_id = %s AND mode = 'agent' ORDER BY id""", machine_id)
+        reuse = same_machine(facts, str(facts.get("hostname") or ""), candidates)
+        if not reuse and candidates:
+            clone_of = candidates[0]["name"]
+    if reuse:
+        name = reuse["name"]
+    else:
+        taken = await db.fetchone("SELECT id, mode, machine_id FROM hosts WHERE name = %s", name)
+        # By name only for an agent host enrolled before machine ids were recorded; a
+        # different machine that happens to share a hostname mustn't take a host over.
+        if taken and taken["mode"] == "agent" and not taken["machine_id"] and not clone_of:
+            reuse = taken
+        elif taken:
+            name = f"{name}-{security.new_token(3).lower()}"
+    if reuse:
+        host_id = reuse["id"]
         await db.execute("UPDATE hosts SET agent_token_hash = %s WHERE id = %s",
                          security.token_hash(agent_token), host_id)
         what = f"Re-enrolled agent on {name}"
     else:
-        if existing:
-            name = f"{name}-{security.new_token(3).lower()}"
         host_id = await db.fetchval(
             """INSERT INTO hosts (name, address, mode, group_id, tags, agent_token_hash)
                VALUES (%s, %s, 'agent', %s, %s, %s) RETURNING id""",
@@ -118,6 +158,9 @@ async def enroll(request: Request):
             row["group_id"], row["tags"],
             security.token_hash(agent_token))
         what = f"Enrolled agent on {name}"
+        if clone_of:
+            what += (f" (it has the same /etc/machine-id as {clone_of}: a cloned machine? "
+                     "Give it its own, then reinstall the agent)")
     if facts.get("os_id"):
         await fleet.record_facts(host_id, facts)
     await db.audit(f"enrolment token {row['label'] or row['id']}", what)
@@ -237,6 +280,14 @@ async def handle(conn: AgentConn, msg: dict) -> None:
         bundle = str(msg.get("bundle") or "")[:40] or None
         await db.execute("UPDATE hosts SET agent_version = %s, agent_bundle = %s, last_error = NULL WHERE id = %s",
                          str(msg.get("version", ""))[:40], bundle, hid)
+        if facts.get("boot_id"):
+            seen = recent_boots.setdefault(hid, [])
+            machine = f"{facts['boot_id']}|{facts.get('hostname', '')}|{facts.get('address', '')}"
+            seen.append((machine, time.monotonic()))
+            del seen[:-3]
+            if shared_identity(seen):
+                log.warning("host %s: two machines share one agent identity", hid)
+                await db.execute("UPDATE hosts SET last_error = %s WHERE id = %s", SHARED_TOKEN, hid)
         await finish_reboots(hid, facts.get("boot_id"))
         await finish_agent_updates(hid, str(msg.get("version", "")), bundle)
         stale = await db.fetchval(
