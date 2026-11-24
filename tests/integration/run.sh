@@ -111,7 +111,9 @@ for os in ubuntu fedora; do
 done
 sleep 8
 for os in ubuntu fedora; do
-    $E exec fwci-$os sh -c "curl -fsSk https://web:8443/agent/install.sh | sh -s -- $ENROL" | tail -2
+    # To a file first: piped into sh, a failed download would look like success.
+    $E exec fwci-$os sh -c "curl -fsSk -o /tmp/install.sh https://web:8443/agent/install.sh && sh /tmp/install.sh $ENROL" \
+        | tail -2 || fail "the agent didn't install on ci-$os"
 done
 for _ in $(seq 1 90); do
     [ "$(psql "SELECT COUNT(*) FROM hosts WHERE name IN ('ci-ubuntu','ci-fedora') AND last_scan_at IS NOT NULL")" = 2 ] && break
