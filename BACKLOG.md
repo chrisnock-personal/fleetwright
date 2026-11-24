@@ -22,7 +22,6 @@ Nothing at the moment: pick the next ones from below.
 
 ## Fixes and tidy-ups
 
-- [#31](https://github.com/chrisnock-personal/fleetwright/issues/31) Audit the Python dependencies (pip-audit): they've never been checked
 - [#32](https://github.com/chrisnock-personal/fleetwright/issues/32) The key-rotation test's fake key trips secret scanners
 - [#33](https://github.com/chrisnock-personal/fleetwright/issues/33) Build SQL identifiers with psycopg.sql instead of f-strings
 - [#20](https://github.com/chrisnock-personal/fleetwright/issues/20) Relabel or remove "Stop at once" when a window closes
