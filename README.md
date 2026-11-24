@@ -1,5 +1,7 @@
 # FleetWright
 
+[![CI](https://github.com/chrisnock-personal/fleetwright/actions/workflows/ci.yml/badge.svg)](https://github.com/chrisnock-personal/fleetwright/actions/workflows/ci.yml)
+
 **FleetWright** keeps a fleet of Ubuntu and Fedora servers up to date. It
 reaches each host either through a small **agent** (a Python service that
 connects out to FleetWright) or **agentless over SSH** with a stored key, and
@@ -242,6 +244,13 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 the exact versions resolved from them inside the image's base and checked with
 `pip-audit -r requirements.lock --no-deps --disable-pip`. Its header says how to
 refresh it. The agent and `fw` need nothing from PyPI.
+
+`tests/integration/run.sh` (Docker or podman, in a scratch copy) builds and starts
+the whole stack, runs the API smoke test against SSH hosts, installs the agent into
+Ubuntu 24.04 and Fedora 44 systemd containers with the real install command, scans
+them with real apt and dnf, drives them with `fw`, and loads every page.
+[CI](.github/workflows/ci.yml) runs it on every push, with the unit tests,
+`pip-audit` of `requirements.lock` (also weekly) and `gitleaks` over the whole history.
 
 Tested against Ubuntu 24.04 and Fedora 44 cloud images.
 

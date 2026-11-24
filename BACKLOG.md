@@ -19,15 +19,20 @@ Nothing at the moment: pick the next ones from below.
 - [#29](https://github.com/chrisnock-personal/fleetwright/issues/29) Flatpak (future, for desktops; needs #18)
 - [#19](https://github.com/chrisnock-personal/fleetwright/issues/19) Test and document Debian, RHEL, Rocky and Alma
 - [#34](https://github.com/chrisnock-personal/fleetwright/issues/34) Data at rest: the database and certificate volumes aren't encrypted
+- [#36](https://github.com/chrisnock-personal/fleetwright/issues/36) Agent self-update: roll back automatically when the new agent won't start
+- [#40](https://github.com/chrisnock-personal/fleetwright/issues/40) MCP server for AI assistants, on fw's client
 
 ## Fixes and tidy-ups
 
+- [#37](https://github.com/chrisnock-personal/fleetwright/issues/37) Containers sharing a kernel, machine id and hostname enrol as one machine
+- [#38](https://github.com/chrisnock-personal/fleetwright/issues/38) Runs move to their next batch only on a 5-second tick
+- [#39](https://github.com/chrisnock-personal/fleetwright/issues/39) Policy preview: broad selections still take 0.3-0.6 s at 5,800 hosts
+- [#41](https://github.com/chrisnock-personal/fleetwright/issues/41) Templates show buttons by role instead of asking the action
 - [#20](https://github.com/chrisnock-personal/fleetwright/issues/20) Relabel or remove "Stop at once" when a window closes
 - [#21](https://github.com/chrisnock-personal/fleetwright/issues/21) Show agents that missed a certificate change, with the re-enrol command
 - [#22](https://github.com/chrisnock-personal/fleetwright/issues/22) Move the sign-in throttle and setup code to Postgres
 - [#23](https://github.com/chrisnock-personal/fleetwright/issues/23) Use a real migration tool instead of schema.sql
 - [#24](https://github.com/chrisnock-personal/fleetwright/issues/24) Postgres over TLS when the database is on another host
-- [#25](https://github.com/chrisnock-personal/fleetwright/issues/25) Integration tests in CI (Ubuntu/Fedora containers, pip-audit, gitleaks)
 
 ## Docs and publishing
 
