@@ -831,3 +831,20 @@ def routes_by_action() -> dict[str, list[str]]:
         if name:
             out.setdefault(name, []).append(f"{sorted(r.methods)[0]} /api/v1{r.path}")
     return out
+
+
+def _describe_routes() -> None:
+    """Routes without their own summary take their action's one-line description, and
+    every route says which role it needs, so the reference matches the actions exactly."""
+    from fastapi.routing import APIRoute
+    from .actions.core import ACTIONS, ROLES
+    for r in api.routes:
+        name = getattr(getattr(r, "endpoint", None), "fleetwright_action", None)
+        if isinstance(r, APIRoute) and name:
+            a = ACTIONS[name]
+            if not r.summary:
+                r.summary = a.summary.rstrip(".")
+            r.description = f"{a.summary}\n\nNeeds the **{ROLES[a.role]}** role (action `{name}`)."
+
+
+_describe_routes()

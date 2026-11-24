@@ -71,3 +71,11 @@ def test_openapi_document_builds():
     assert "/runs" in spec["paths"] and "post" in spec["paths"]["/runs"]
     assert "/runs/{run_id}/events" in spec["paths"]
     assert len(spec["paths"]) >= 45
+
+
+def test_every_endpoint_says_its_role():
+    spec = api.openapi()
+    for path, ops in spec["paths"].items():
+        for method, op in ops.items():
+            if path != "/me":
+                assert "role" in op.get("description", ""), f"{method.upper()} {path} doesn't say its role"
