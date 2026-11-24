@@ -47,8 +47,8 @@
     {{ theme_button() }}
     {% if current_user %}
     <div class="who">
-      <span class="avatar" aria-hidden="true">{{ current_user.name[:1]|upper }}</span>
-      <span class="who-name">{{ current_user.name }}</span>
+      <a class="who-link" href="/account" title="Your account and API tokens"><span class="avatar" aria-hidden="true">{{ current_user.name[:1]|upper }}</span>
+      <span class="who-name">{{ current_user.name }}</span></a>
       <span class="badge role-{{ 'admin' if current_user.role == 'admin' else 'viewer' }}">{{ ROLES[current_user.role] }}</span>
       <form method="post" action="/logout">{{ csrf_field() }}<button type="submit" class="link-btn">Sign out</button></form>
     </div>

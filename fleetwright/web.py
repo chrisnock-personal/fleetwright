@@ -12,7 +12,6 @@ accounts asks for the setup code printed in this process's log.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import secrets
 import time
@@ -26,16 +25,20 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import config, db, fleet, gateway, security
+from . import config, db, gateway, security
+from .actions import admin as admin_actions
+from .actions.core import ActionError
+from .api import api
 from .views import hosts as hosts_views
 from .views import runs as runs_views
 from .views import schedules as schedule_views
 from .views import settings as settings_views
-from .webcommon import flash, form_data, redirect, render
+from .webcommon import flash, form_data, redirect, render, who
 
 log = logging.getLogger("fleetwright.web")
 
-OPEN_PATHS = ("/login", "/setup", "/welcome/", "/static/", "/agent/", "/api/agent/", "/healthz")
+# /api/v1 authenticates each request with an API token itself (api.py), never with the session.
+OPEN_PATHS = ("/login", "/setup", "/welcome/", "/static/", "/agent/", "/api/agent/", "/api/v1/", "/healthz")
 _setup_code: list[str] = []
 _failures: dict[str, deque] = defaultdict(deque)
 FAILURE_LIMIT, FAILURE_WINDOW = 5, 15 * 60
@@ -69,6 +72,7 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")
 app.include_router(gateway.router)
 for module in (hosts_views, runs_views, schedule_views, settings_views):
     app.include_router(module.router)
+app.mount("/api/v1", api)
 
 
 @app.middleware("http")
@@ -99,6 +103,12 @@ async def http_error(request: Request, exc: HTTPException):
     if request.url.path.startswith(("/api/", "/agent/")):
         return PlainTextResponse(str(exc.detail), status_code=exc.status_code)
     return render(request, "error.html", http_status=exc.status_code, code=exc.status_code, message=exc.detail)
+
+
+@app.exception_handler(ActionError)
+async def action_refused(request: Request, exc: ActionError):
+    """An action a page called refused (role, not found, invalid): the error page says why."""
+    return render(request, "error.html", http_status=exc.status, code=exc.status, message=exc.message)
 
 
 @app.exception_handler(RequestValidationError)
@@ -244,86 +254,12 @@ async def welcome(request: Request, token: str):
 
 # ─── Overview ───────────────────────────────────────────────────────────────
 
-UNREACHABLE_SQL = ("((h.mode = 'agent' AND NOT h.agent_connected) "
-                   "OR (h.mode = 'ssh' AND h.last_error LIKE 'Can''t connect%%'))")
-
-
 @app.get("/", response_class=HTMLResponse)
 async def overview(request: Request):
-    totals, pkgs, runs24, groups, runs, days, oses, attention = await asyncio.gather(
-        db.fetchone(f"""SELECT COUNT(*) AS hosts,
-                COUNT(*) FILTER (WHERE pending_count > 0) AS with_updates,
-                COUNT(*) FILTER (WHERE security_count > 0) AS with_security,
-                COUNT(*) FILTER (WHERE reboot_required) AS reboot,
-                COUNT(*) FILTER (WHERE {UNREACHABLE_SQL}) AS unreachable,
-                COUNT(*) FILTER (WHERE {UNREACHABLE_SQL} AND mode = 'agent') AS unreachable_agent,
-                COUNT(*) FILTER (WHERE mode = 'agent') AS agents,
-                COUNT(*) FILTER (WHERE mode = 'ssh') AS ssh,
-                COUNT(DISTINCT group_id) AS groups,
-                MAX(last_scan_at) AS last_scan
-              FROM hosts h"""),
-        # hosts.pending_count is kept from each scan; counting pending_updates itself
-        # meant reading every row (83 ms at 377k in the load test).
-        db.fetchone("""SELECT (SELECT COALESCE(SUM(pending_count), 0) FROM hosts) AS pending,
-                              (SELECT COUNT(DISTINCT advisory) FROM pending_updates WHERE is_security) AS advisories,
-                              (SELECT COUNT(DISTINCT host_id) FROM pending_updates
-                                WHERE severity = 'critical') AS critical_hosts"""),
-        db.fetchone("""SELECT COUNT(*) AS runs, COUNT(*) FILTER (WHERE status = 'failed'
-                              OR (status = 'done' AND note LIKE '%%failed')) AS failed,
-                              COUNT(*) FILTER (WHERE status IN ('running', 'paused')) AS active
-                         FROM runs WHERE created_at > NOW() - INTERVAL '24 hours' OR status IN ('running','paused')"""),
-        db.fetch(f"""SELECT g.id, COALESCE(g.name, 'Ungrouped') AS name, COUNT(h.id) AS hosts,
-                            COUNT(h.id) FILTER (WHERE h.pending_count = 0) AS ok,
-                            COUNT(h.id) FILTER (WHERE h.pending_count > 0 AND h.security_count = 0) AS updates,
-                            COUNT(h.id) FILTER (WHERE h.security_count > 0) AS security,
-                            COUNT(h.id) FILTER (WHERE {UNREACHABLE_SQL}) AS unreachable,
-                            COUNT(h.id) FILTER (WHERE h.reboot_required) AS reboot,
-                            string_agg(DISTINCT initcap(h.os_id) || ' ' || h.os_version, ', ') AS oses,
-                            string_agg(DISTINCT h.mode, ', ') AS modes
-                       FROM hosts h LEFT JOIN groups g ON g.id = h.group_id
-                      GROUP BY g.id, g.name ORDER BY g.name NULLS LAST"""),
-        db.fetch("""SELECT r.*, COUNT(t.id) AS total,
-                           COUNT(t.id) FILTER (WHERE t.status IN ('done','failed','skipped')) AS finished,
-                           COUNT(t.id) FILTER (WHERE t.status = 'failed') AS failed
-                      FROM runs r LEFT JOIN tasks t ON t.run_id = r.id
-                     WHERE r.created_at > NOW() - INTERVAL '24 hours' OR r.status IN ('running','paused')
-                     GROUP BY r.id ORDER BY (r.status IN ('running','paused')) DESC, r.id DESC LIMIT 6"""),
-        db.fetch("""SELECT d::date AS day,
-                           (SELECT COUNT(DISTINCT host_id) FROM package_changes
-                             WHERE at >= d AND at < d + INTERVAL '1 day') AS hosts,
-                           (SELECT COUNT(*) FROM tasks WHERE op = 'apply' AND status = 'failed'
-                             AND finished_at >= d AND finished_at < d + INTERVAL '1 day') AS failed
-                      FROM generate_series(date_trunc('day', NOW()) - INTERVAL '13 days',
-                                           date_trunc('day', NOW()), INTERVAL '1 day') AS d"""),
-        db.fetch("""SELECT COALESCE(os_pretty, 'Not scanned yet') AS name, COUNT(*) AS n
-                      FROM hosts GROUP BY 1 ORDER BY n DESC LIMIT 6"""),
-        db.fetch(f"""(SELECT h.id, h.name, 'Unreachable' AS badge, 'bad' AS tone,
-                             COALESCE(h.last_error, 'Agent not connected') || ' · last seen ' AS detail,
-                             h.last_seen AS at, 1 AS rank
-                        FROM hosts h WHERE {UNREACHABLE_SQL} ORDER BY h.last_seen NULLS FIRST LIMIT 4)
-                     UNION ALL
-                     (SELECT h.id, h.name, 'Failed', 'bad', COALESCE(t.detail, 'failed') || ' · ', t.finished_at, 2
-                        FROM tasks t JOIN hosts h ON h.id = t.host_id
-                       WHERE t.status = 'failed' AND t.finished_at > NOW() - INTERVAL '24 hours'
-                         AND t.op <> 'scan' ORDER BY t.finished_at DESC LIMIT 4)
-                     UNION ALL
-                     (SELECT h.id, h.name, 'Critical', 'warn', 'Critical security update waiting · scanned ',
-                             h.last_scan_at, 3
-                        FROM hosts h WHERE EXISTS (SELECT 1 FROM pending_updates p WHERE p.host_id = h.id
-                                                   AND p.severity = 'critical') LIMIT 3)
-                     UNION ALL
-                     (SELECT h.id, h.name, 'Reboot', 'info', 'Reboot needed · running ' || COALESCE(h.kernel, '?')
-                             || ' · ', h.last_scan_at, 4
-                        FROM hosts h WHERE h.reboot_required LIMIT 3)
-                     UNION ALL
-                     (SELECT h.id, h.name, 'Auto-updating', 'warn',
-                             (SELECT string_agg(a->>'tool', ', ') FROM jsonb_array_elements(h.auto_updates) a
-                               WHERE (a->>'installs')::boolean)
-                             || ' installs updates outside FleetWright · scanned ', h.last_scan_at, 5
-                        FROM hosts h WHERE {fleet.AUTO_UPDATING_SQL} LIMIT 3)
-                     ORDER BY rank LIMIT 8"""),
-    )
+    o = await admin_actions.overview(who(request))
+    days, oses = o["days"], o["oses"]
     peak = max([d["hosts"] for d in days] + [1])
     top_os = max([o["n"] for o in oses] + [1])
-    return render(request, "overview.html", t=totals, pkgs=pkgs, runs24=runs24, groups=groups,
-                  runs=runs, days=days, peak=peak, oses=oses, top_os=top_os, attention=attention)
+    return render(request, "overview.html", t=o["totals"], pkgs=o["packages"], runs24=o["runs_24h"],
+                  groups=o["groups"], runs=o["recent_runs"], days=days, peak=peak, oses=oses, top_os=top_os,
+                  attention=o["attention"])

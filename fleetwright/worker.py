@@ -252,6 +252,7 @@ class Worker:
             await db.notify(fleet.TASK_CHANNEL, "done")
         await db.execute("DELETE FROM tasks WHERE run_id IS NULL AND op = 'scan' AND status IN ('done','failed') "
                          "AND finished_at < NOW() - INTERVAL '7 days'")
+        await db.execute("DELETE FROM api_idempotency WHERE created_at < NOW() - INTERVAL '1 day'")
         await db.execute("DELETE FROM audit_log WHERE at < NOW() - make_interval(days => %s)",
                          config.LOG_RETENTION_DAYS * 4)
 

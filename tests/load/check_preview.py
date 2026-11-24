@@ -17,7 +17,8 @@ import time
 
 sys.path[:0] = ["/app", "/load"]
 from fleetwright import db, fleet  # noqa: E402
-from fleetwright.views.schedules import _preview_python, preview  # noqa: E402
+from fleetwright.actions.schedules import _preview_python  # noqa: E402
+from fleetwright.actions.schedules import compute_preview as preview  # noqa: E402
 
 SELECTIONS = [
     {"mode": "all"},

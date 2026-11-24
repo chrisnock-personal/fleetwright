@@ -156,6 +156,20 @@ so a host whose new agent won't start needs the install command run again.
 Agents older than 0.3.0 can't update themselves: run the install command on
 them once.
 
+## API
+
+Everything the pages can do is also at `/api/v1` as JSON, with the same roles.
+Make a token on your **Account** page (click your name), then:
+
+```bash
+curl -H "Authorization: Bearer fwt_…" https://fleetwright:8443/api/v1/hosts?status=security
+```
+
+Runs return their id at once and can be followed live with Server-Sent
+Events, and retries are safe with an `Idempotency-Key`. Reference, examples and
+every endpoint with its role: [docs/api.md](docs/api.md), and
+`/api/v1/docs` on your own server.
+
 ## Agentless hosts
 
 FleetWright connects as the key's user and runs `sudo -n python3 -`, sending
@@ -190,14 +204,20 @@ Running Python as root is as good as root, so treat that key like a root key.
   key is accepted in the handshake, so a host offering a different key is
   refused before FleetWright authenticates or sends anything. *Forget pinned
   host key* on the host page clears it after a deliberate rebuild.
-- **Secrets**: SSH private keys are encrypted (Fernet, from
-  `FLEETWRIGHT_SECRET_KEY`); agent tokens, enrolment tokens and setup links
-  are stored only as SHA-256 hashes; passwords use Argon2.
+- **Secrets**: SSH private keys and notification secrets are encrypted
+  (Fernet, from `FLEETWRIGHT_SECRET_KEY`); agent tokens, enrolment tokens,
+  API tokens and setup links are stored only as SHA-256 hashes; passwords use
+  Argon2.
 - **Accounts**: no default password. The first admin needs the setup code
   from the log; others get single-use setup links. Roles: admin, operator,
-  viewer. Every change is in the audit log.
+  viewer, checked in one place for the pages and the API alike. Every change
+  is in the audit log.
+- **API tokens** act with their person's role or a lower one, can expire and
+  be revoked, and are rate-limited. The API accepts only tokens, never the
+  session cookie, so other sites can't use a signed-in browser.
 - Not yet: the Postgres connection inside the compose network is
-  unencrypted, and the database volume and backups aren't encrypted at rest.
+  unencrypted, and the database volume isn't encrypted at rest (backups are,
+  with age).
 
 ## Configuration
 

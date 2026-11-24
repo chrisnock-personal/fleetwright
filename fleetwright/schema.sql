@@ -270,3 +270,31 @@ CREATE INDEX IF NOT EXISTS idx_outbox_due ON notify_outbox (next_try) WHERE sent
 
 -- Set once a host has been reported unreachable, cleared (and reported) when it's back.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS unreachable_notified BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- API tokens (api.py): each belongs to a person and acts with at most their role.
+-- The token itself is shown once; only its SHA-256 is kept, plus its first characters to
+-- tell tokens apart.
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    token_hash    TEXT UNIQUE NOT NULL,
+    prefix        TEXT NOT NULL,
+    role          TEXT NOT NULL,                       -- never above the person's role
+    expires_at    TIMESTAMPTZ,
+    last_used_at  TIMESTAMPTZ,
+    revoked_at    TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, name)
+);
+
+-- Idempotency-Key on API requests that start runs: a retried request returns the first
+-- one's answer instead of starting another run. Kept a day.
+CREATE TABLE IF NOT EXISTS api_idempotency (
+    token_id    INTEGER NOT NULL REFERENCES api_tokens (id) ON DELETE CASCADE,
+    key         TEXT NOT NULL,
+    endpoint    TEXT NOT NULL,
+    response    JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (token_id, key)
+);

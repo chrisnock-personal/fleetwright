@@ -44,7 +44,7 @@
           <form method="post" action="/settings/notifications" style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
             {{ csrf_field() }}<input type="hidden" name="id" value="{{ c.id }}">
             <div class="field"><label>Name</label><input class="input" name="name" value="{{ c.name }}"></div>
-            {{ kind_fields(c.kind, c.config, c.secret_enc is not none) }}
+            {{ kind_fields(c.kind, c.config, c.has_secret) }}
             {{ event_boxes(c.events) }}
             <div><button class="btn primary" type="submit">Save</button></div>
           </form>

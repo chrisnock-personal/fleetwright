@@ -39,6 +39,9 @@ PUBLIC_URL = os.getenv("FLEETWRIGHT_PUBLIC_URL",
 SECURE_COOKIES = os.getenv("FLEETWRIGHT_SECURE_COOKIES", "true" if TLS_ON else "false").lower() \
     in ("1", "true", "yes")
 
+# API: requests a minute per token (bursts of up to 120 are fine)
+API_RATE_PER_MIN = _int("FLEETWRIGHT_API_RATE_PER_MIN", 600)
+
 # Worker
 WORKER_NAME = os.getenv("FLEETWRIGHT_WORKER_NAME", "") or f"worker-{os.getpid()}"
 SSH_CONCURRENCY = _int("FLEETWRIGHT_SSH_CONCURRENCY", 50)

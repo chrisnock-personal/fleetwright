@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from .. import db, fleet
-from ..webcommon import flash, form_data, redirect, render, require
+from .. import db
+from ..actions import runs as run_actions
+from ..webcommon import attempt, flash, form_data, redirect, render, who
 
 router = APIRouter()
 
@@ -17,20 +18,12 @@ router = APIRouter()
 async def run_list(request: Request, page: int = 1):
     per = 50
     page = max(1, page)
-    rows = await db.fetch("""SELECT r.*, COUNT(t.id) AS total,
-                                    COUNT(t.id) FILTER (WHERE t.status IN ('done','failed','skipped')) AS finished,
-                                    COUNT(t.id) FILTER (WHERE t.status = 'failed') AS failed,
-                                    COUNT(t.id) FILTER (WHERE t.status = 'done') AS ok
-                               FROM runs r LEFT JOIN tasks t ON t.run_id = r.id
-                              GROUP BY r.id ORDER BY (r.status IN ('running','paused')) DESC, r.id DESC
-                              LIMIT %s OFFSET %s""", per + 1, (page - 1) * per)
+    rows = (await run_actions.list_runs(who(request), limit=per + 1, offset=(page - 1) * per))["runs"]
     return render(request, "runs.html", runs=rows[:per], page=page, more=len(rows) > per)
 
 
-async def _run_state(run_id: int, task_id: Optional[int], batch: Optional[int]) -> dict:
-    run = await db.fetchone("SELECT * FROM runs WHERE id = %s", run_id)
-    if not run:
-        raise HTTPException(404, "No such run")
+async def _run_state(request: Request, run_id: int, task_id: Optional[int], batch: Optional[int]) -> dict:
+    run = await run_actions.get_run(who(request), run_id)   # the role check, and 404
     batches = await db.fetch("""SELECT batch, COUNT(*) AS n,
                                        COUNT(*) FILTER (WHERE status = 'done') AS ok,
                                        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
@@ -79,13 +72,13 @@ def _int_or_none(value: Optional[str]) -> Optional[int]:
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
 async def run_page(request: Request, run_id: int, task: Optional[str] = None, batch: Optional[str] = None):
-    state = await _run_state(run_id, _int_or_none(task), _int_or_none(batch))
+    state = await _run_state(request, run_id, _int_or_none(task), _int_or_none(batch))
     return render(request, "run.html", target=await _target_text(state["run"]), **state)
 
 
 @router.get("/runs/{run_id}/live", response_class=HTMLResponse)
 async def run_live(request: Request, run_id: int, task: Optional[str] = None, batch: Optional[str] = None):
-    state = await _run_state(run_id, _int_or_none(task), _int_or_none(batch))
+    state = await _run_state(request, run_id, _int_or_none(task), _int_or_none(batch))
     return render(request, "run_live.html", **state)
 
 
@@ -100,29 +93,23 @@ async def _target_text(run: dict) -> str:
 @router.post("/runs/{run_id}/control")
 async def run_control(request: Request, run_id: int):
     form = await form_data(request)
-    u = require(request, "operator")
+    p = who(request)
+    back = f"/runs/{run_id}"
     action = form.get("action")
-    run = await db.fetchone("SELECT * FROM runs WHERE id = %s", run_id)
-    if not run:
-        raise HTTPException(404)
     if action == "abort":
-        await fleet.abort_run(run_id, u["name"])
-        flash(request, "Aborted. Hosts already running finish their current step.", "info")
-    elif action == "pause" and run["status"] == "running":
-        await db.execute("UPDATE runs SET status = 'paused' WHERE id = %s", run_id)
-        await db.audit(u["name"], f"Paused run #{run_id}")
-        flash(request, "Paused: the batch that's running finishes, then nothing new starts.", "info")
-    elif action == "resume" and run["status"] == "paused":
-        await db.execute("UPDATE runs SET status = 'running' WHERE id = %s", run_id)
-        await db.audit(u["name"], f"Resumed run #{run_id}")
-        flash(request, "Resumed.")
+        _, bounce = await attempt(request, run_actions.abort(p, run_id), back)
+        if not bounce:
+            flash(request, "Aborted. Hosts already running finish their current step.", "info")
+    elif action == "pause":
+        _, bounce = await attempt(request, run_actions.pause(p, run_id), back)
+        if not bounce:
+            flash(request, "Paused: the batch that's running finishes, then nothing new starts.", "info")
+    elif action == "resume":
+        _, bounce = await attempt(request, run_actions.resume(p, run_id), back)
+        if not bounce:
+            flash(request, "Resumed.")
     elif action == "retry_failed":
-        hosts = [r["host_id"] for r in await db.fetch(
-            "SELECT host_id FROM tasks WHERE run_id = %s AND status = 'failed'", run_id)]
-        if hosts:
-            new_id = await fleet.create_run(kind=run["kind"], title=run["title"].removesuffix(" (retry)") + " (retry)",
-                                            actor=u["name"],
-                                            host_ids=hosts, selection=run["selection"], reboot=run["reboot"],
-                                            batch_size=run["batch_size"], max_failures=run["max_failures"])
-            return redirect(f"/runs/{new_id}")
-    return redirect(f"/runs/{run_id}")
+        r, bounce = await attempt(request, run_actions.retry(p, run_id), back)
+        if r:
+            return redirect(f"/runs/{r['run_id']}")
+    return redirect(back)

@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from . import fleet, security
+from .actions.core import ActionError, Principal
 
 ROLES = {"admin": "Admin", "operator": "Operator", "viewer": "Viewer"}
 RANK = {"viewer": 0, "operator": 1, "admin": 2}
@@ -55,11 +56,32 @@ def user(request: Request) -> dict:
     return request.state.user
 
 
-def require(request: Request, role: str) -> dict:
+def who(request: Request) -> Principal:
+    """The signed-in person, as the actions see them. Pages never check roles themselves:
+    the action they call does (actions/core.py)."""
     u = request.state.user
-    if RANK.get(u["role"], -1) < RANK[role]:
-        raise HTTPException(403, f"This needs the {ROLES[role]} role.")
-    return u
+    return Principal(u["id"], u["name"], u["role"])
+
+
+def may(request: Request, action_name: str) -> None:
+    """For a page that only shows an action's form: refuse it to people the action would refuse.
+    The role comes from the action's own declaration."""
+    from .actions.core import ACTIONS
+    act = ACTIONS[action_name]
+    if not who(request).can(act.role):
+        raise ActionError("forbidden", f"This needs the {ROLES[act.role]} role.")
+
+
+async def attempt(request: Request, coro, back: str):
+    """Run an action for a form: (result, None), or (None, a redirect back with the problem
+    flashed) when it was refused as invalid. Other refusals reach the error page."""
+    try:
+        return await coro, None
+    except ActionError as e:
+        if e.code != "invalid":
+            raise
+        flash(request, e.message, "bad")
+        return None, redirect(back)
 
 
 def can(u: Optional[dict], role: str) -> bool:

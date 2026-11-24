@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% set active = "account" %}
+{% block title %}Your account · FleetWright{% endblock %}
+{% block body %}
+<main>
+  {{ flashes_block() }}
+  <div class="page-head"><div><h1>{{ current_user.name }}</h1>
+    <div class="meta-line"><span>{{ current_user.email }}</span><span>{{ ROLES[current_user.role] }}</span></div></div></div>
+
+  {% if new %}
+  <section class="card pad" style="border-color:var(--accent)">
+    <h2>API token “{{ new.name }}” ({{ ROLES[new.role] }})</h2>
+    <p class="hint">Copy it now: it isn't shown again. Send it as <code class="mono">Authorization: Bearer …</code>.</p>
+    <div class="cmd"><code>{{ new.token }}</code></div>
+    <p class="hint" style="margin-top:8px">Try it: <code class="mono">curl -H "Authorization: Bearer {{ new.token[:10] }}…" {{ api_url }}/me</code></p>
+  </section>
+  {% endif %}
+
+  <section class="card panel">
+    <div class="panel-head"><h2>API tokens</h2><span class="hint"><a href="/api/v1/docs">API reference</a></span></div>
+    <p class="hint" style="padding:0 20px 12px">Scripts, CI pipelines and AI agents use the API with a token. A token acts as you, with your role or a lower one: a viewer token can only read. Everything a token changes goes into the audit log under its name.</p>
+    {% if tokens %}
+    <div class="scroll"><table>
+      <thead><tr><th>Name</th><th>Role</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+      {% for t in tokens %}
+        <tr>
+          <td><strong>{{ t.name }}</strong><div class="t-sub plain mono">{{ t.prefix }}…</div></td>
+          <td>{{ ROLES[t.role] }}</td>
+          <td class="sub nowrap">{% if t.revoked_at %}<span class="badge muted">Revoked</span>{% elif t.expires_at %}{{ t.expires_at|when }}{% else %}Never{% endif %}</td>
+          <td class="sub nowrap">{{ t.last_used_at|ago if t.last_used_at else 'never' }}</td>
+          <td>{% if not t.revoked_at %}<form method="post" action="/account/tokens/{{ t.id }}/revoke" data-confirm="Revoke {{ t.name }}? Whatever uses it stops working.">{{ csrf_field() }}<button class="btn small" type="submit">Revoke</button></form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="empty">No tokens yet.</p>{% endif %}
+  </section>
+
+  <form class="card pad" method="post" action="/account/tokens">
+    {{ csrf_field() }}
+    <h2>New API token</h2>
+    <div class="form-grid">
+      <div class="field"><label for="tname">Name</label><input class="input" id="tname" name="name" placeholder="ci-pipeline" required></div>
+      <div class="field"><label for="trole">Role</label><select id="trole" name="role">
+        {% for r in ['viewer', 'operator', 'admin'] %}{% if can(current_user, r) %}<option value="{{ r }}" {{ 'selected' if r == current_user.role }}>{{ ROLES[r] }}</option>{% endif %}{% endfor %}
+      </select><span class="help">At most your own.</span></div>
+      <div class="field"><label for="texp">Expires after (days)</label><input class="input short" id="texp" name="expires_days" placeholder="never" inputmode="numeric"></div>
+    </div>
+    <div class="actions"><span></span><div class="end"><button class="btn primary" type="submit">Create token</button></div></div>
+  </form>
+
+  {% if others %}
+  <section class="card panel">
+    <div class="panel-head"><h2>Everyone else's tokens</h2><span class="hint">admins see these</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Owner</th><th>Name</th><th>Role</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+      {% for t in others %}
+        <tr><td>{{ t.owner }}</td><td><strong>{{ t.name }}</strong> <span class="mono tone-muted">{{ t.prefix }}…</span></td><td>{{ ROLES[t.role] }}</td>
+          <td class="sub nowrap">{% if t.revoked_at %}<span class="badge muted">Revoked</span>{% else %}{{ t.last_used_at|ago if t.last_used_at else 'never' }}{% endif %}</td>
+          <td>{% if not t.revoked_at %}<form method="post" action="/account/tokens/{{ t.id }}/revoke" data-confirm="Revoke {{ t.owner }}'s token {{ t.name }}?">{{ csrf_field() }}<button class="btn small" type="submit">Revoke</button></form>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  {% endif %}
+</main>
+{% endblock %}

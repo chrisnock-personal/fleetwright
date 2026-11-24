@@ -1,32 +1,22 @@
-"""Hosts: the list, adding SSH hosts, a host's page and its actions."""
+"""Hosts: the list, adding SSH hosts, a host's page and its actions. Roles are checked by
+the actions these call (actions/hosts.py, actions/runs.py), not here."""
 
 from __future__ import annotations
 
-import fnmatch
 import math
-import re
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from .. import db, fleet, gateway
-from ..webcommon import as_list, flash, form_data, redirect, render, require, split_words
+from .. import db, gateway
+from ..actions import hosts as host_actions
+from ..actions import runs as run_actions
+from ..actions.core import ActionError, invalid
+from ..actions.hosts import STATUS_FILTERS, parse_host_lines  # noqa: F401 - tests import it from here
+from ..webcommon import as_list, attempt, flash, form_data, may, redirect, render, split_words, who
 
 router = APIRouter()
-
-STATUS_FILTERS = {
-    "all": ("All", "TRUE"),
-    "updates": ("Needs updates", "h.pending_count > 0"),
-    "security": ("Security", "h.security_count > 0"),
-    "reboot": ("Reboot", "h.reboot_required"),
-    "unreachable": ("Unreachable", "((h.mode = 'agent' AND NOT h.agent_connected) "
-                                   "OR (h.mode = 'ssh' AND h.last_error LIKE 'Can''t connect%%'))"),
-    "never": ("Not scanned", "h.last_scan_at IS NULL"),
-    "auto": ("Auto-updating", fleet.AUTO_UPDATING_SQL),
-    "agent_old": ("Agent outdated", gateway.outdated_sql()),
-}
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 PER_PAGE = (25, 50, 100, 250)
 
 
@@ -39,103 +29,69 @@ async def _choices() -> dict:
     }
 
 
+def _int(v) -> int | None:
+    return int(v) if str(v or "").isdigit() else None
+
+
 @router.get("/hosts", response_class=HTMLResponse)
 async def host_list(request: Request, status: str = "all", group: str = "", os: str = "", mode: str = "",
                     tag: str = "", q: str = "", page: int = 1, per: int = 25):
     status = status if status in STATUS_FILTERS else "all"
     per = per if per in PER_PAGE else 25
-    where, args = ["TRUE"], []
-    if group == "none":
-        where.append("h.group_id IS NULL")
-    elif group.isdigit():
-        where.append("h.group_id = %s")
-        args.append(int(group))
-    if os:
-        where.append("h.os_pretty = %s")
-        args.append(os)
-    if mode in ("ssh", "agent"):
-        where.append("h.mode = %s")
-        args.append(mode)
-    if tag:
-        where.append("%s = ANY(h.tags)")
-        args.append(tag)
-    if q:
-        where.append("(h.name ILIKE %s OR h.address ILIKE %s OR EXISTS (SELECT 1 FROM pending_updates p "
-                     "WHERE p.host_id = h.id AND (p.name ILIKE %s OR p.advisory ILIKE %s)))")
-        like = f"%{q}%"
-        args += [like, like, like, like]
-    base = " AND ".join(where)
-    counts = await db.fetchone(
-        "SELECT " + ", ".join(f"COUNT(*) FILTER (WHERE {sql}) AS {k}" for k, (_, sql) in STATUS_FILTERS.items())
-        + f" FROM hosts h WHERE {base}", *args)
-    total = counts[status]
-    pages = max(1, math.ceil(total / per))
-    page = min(max(1, page), pages)
-    rows = await db.fetch(
-        f"""SELECT h.*, g.name AS group_name FROM hosts h LEFT JOIN groups g ON g.id = h.group_id
-             WHERE {base} AND {STATUS_FILTERS[status][1]}
-             ORDER BY h.security_count DESC, h.pending_count DESC, h.name
-             LIMIT %s OFFSET %s""", *args, per, (page - 1) * per)
-    return render(request, "hosts.html", hosts=rows, counts=counts, filters=STATUS_FILTERS, status=status,
-                  f={"group": group, "os": os, "mode": mode, "tag": tag, "q": q}, page=page, pages=pages,
-                  per=per, per_choices=PER_PAGE, total=total, **await _choices())
+    filters = dict(status=status, group=group, os=os, mode=mode, tag=tag, q=q, limit=per)
+    page = max(1, page)
+    r = await host_actions.list_hosts(who(request), **filters, offset=(page - 1) * per)
+    pages = max(1, math.ceil(r["total"] / per))
+    if page > pages:
+        page = pages
+        r = await host_actions.list_hosts(who(request), **filters, offset=(page - 1) * per)
+    return render(request, "hosts.html", hosts=r["hosts"], counts=r["counts"], filters=STATUS_FILTERS,
+                  status=status, f={"group": group, "os": os, "mode": mode, "tag": tag, "q": q}, page=page,
+                  pages=pages, per=per, per_choices=PER_PAGE, total=r["total"], **await _choices())
+
+
+async def _start(request: Request, back: str, **kw):
+    r, bounce = await attempt(request, run_actions.start(who(request), **kw), back)
+    return bounce or redirect(f"/runs/{r['run_id']}")
 
 
 @router.post("/hosts/bulk")
 async def host_bulk(request: Request):
     form = await form_data(request)
-    u = require(request, "operator")
+    p = who(request)
     ids = [int(i) for i in as_list(form.get("host")) if i.isdigit()]
     action = form.get("action")
     back = form.get("back") or "/hosts"
     if not ids:
         flash(request, "Tick at least one host first.", "bad")
         return redirect(back)
+    target = {"hosts": ids}
     if action == "schedule":
         return redirect("/schedules/book?" + urlencode([("host", i) for i in ids]))
     if action == "scan":
-        n = await fleet.queue_scan(ids)
-        flash(request, f"Scanning {n} host{'s' if n != 1 else ''}.")
+        r = await host_actions.scan(p, ids)
+        flash(request, f"Scanning {r['queued']} host{'s' if r['queued'] != 1 else ''}.")
         return redirect(back)
-    if action in ("apply_security", "apply_all", "reboot"):
-        selection = {"mode": "kinds", "kinds": ["security"]} if action == "apply_security" else {"mode": "all"}
-        title = {"apply_security": "Security updates", "apply_all": "All updates", "reboot": "Reboot"}[action]
-        run_id = await fleet.create_run(kind="reboot" if action == "reboot" else "apply", title=title,
-                                        actor=u["name"], host_ids=ids, selection=selection,
-                                        batch_size=int(form.get("batch") or 0) if str(form.get("batch") or "").isdigit() else 0,
-                                        reboot="never")
-        return redirect(f"/runs/{run_id}")
-    if action == "auto_off":
-        run_id = await fleet.create_run(kind="auto_off", title=fleet.AUTO_OFF_TITLE, actor=u["name"],
-                                        host_ids=ids)
-        return redirect(f"/runs/{run_id}")
-    if action == "agent_update":
-        run_id = await gateway.start_agent_update(u["name"], ids)
-        if run_id is None:
-            flash(request, "None of those hosts has an agent that can update itself and differs from "
-                           "this server's. Agents older than 0.3.0 need reinstalling once.", "info")
-            return redirect(back)
-        return redirect(f"/runs/{run_id}")
+    if action in ("apply_security", "apply_all"):
+        sel = {"mode": "kinds", "kinds": ["security"]} if action == "apply_security" else {"mode": "all"}
+        return await _start(request, back, kind="apply", target=target, selection=sel,
+                            title="Security updates" if action == "apply_security" else "All updates",
+                            batch_size=_int(form.get("batch")) or 0)
+    if action in ("reboot", "auto_off", "agent_update"):
+        return await _start(request, back, kind=action, target=target)
     if action == "tag":
         tags = split_words(form.get("tags"))
         if tags:
-            await db.execute("""UPDATE hosts SET tags = ARRAY(SELECT DISTINCT unnest(tags || %s::text[]))
-                                 WHERE id = ANY(%s)""", tags, ids)
-            await db.audit(u["name"], f"Tagged {len(ids)} hosts: {', '.join(tags)}")
+            await host_actions.tag(p, ids, tags)
             flash(request, f"Tagged {len(ids)} hosts.")
         return redirect(back)
     if action == "group":
-        gid = form.get("group_id")
-        await db.execute("UPDATE hosts SET group_id = %s WHERE id = ANY(%s)",
-                         int(gid) if str(gid).isdigit() else None, ids)
+        await host_actions.move(p, ids, _int(form.get("group_id")))
         flash(request, f"Moved {len(ids)} hosts.")
         return redirect(back)
     if action == "delete":
-        require(request, "admin")
-        names = [r["name"] for r in await db.fetch("SELECT name FROM hosts WHERE id = ANY(%s)", ids)]
-        await db.execute("DELETE FROM hosts WHERE id = ANY(%s)", ids)
-        await db.audit(u["name"], f"Removed {len(names)} hosts: {', '.join(names[:20])}")
-        flash(request, f"Removed {len(names)} hosts. Agents on them stop being able to connect.")
+        r = await host_actions.delete(p, ids)
+        flash(request, f"Removed {len(r['removed'])} hosts. Agents on them stop being able to connect.")
         return redirect(back)
     raise HTTPException(400, "Unknown action")
 
@@ -143,10 +99,8 @@ async def host_bulk(request: Request):
 @router.post("/hosts/scan-all")
 async def scan_all(request: Request):
     await form_data(request)
-    u = require(request, "operator")
-    ids = [r["id"] for r in await db.fetch("SELECT id FROM hosts")]
-    n = await fleet.queue_scan(ids)
-    await db.audit(u["name"], f"Scanned all hosts ({n})")
+    r = await host_actions.scan(who(request))
+    n = r["queued"]
     flash(request, f"Scanning {n} host{'s' if n != 1 else ''}. Results arrive over the next few minutes.")
     return redirect("/")
 
@@ -155,63 +109,24 @@ async def scan_all(request: Request):
 
 @router.get("/hosts/new", response_class=HTMLResponse)
 async def host_new_page(request: Request):
-    require(request, "operator")
+    may(request, "hosts.add_ssh")
     return render(request, "host_new.html", form={}, errors=[], **await _choices())
-
-
-def parse_host_lines(text: str) -> tuple[list[dict], list[str]]:
-    """'name address[:port]' or just 'address' per line."""
-    out, errors = [], []
-    for n, raw in enumerate(text.splitlines(), 1):
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        parts = line.split()
-        if len(parts) == 1:
-            addr = parts[0]
-            name = addr.split(":")[0]
-        elif len(parts) == 2:
-            name, addr = parts
-        else:
-            errors.append(f"Line {n}: expected 'name address' or 'address'")
-            continue
-        port = 22
-        if addr.count(":") == 1:
-            addr, p = addr.split(":")
-            if not p.isdigit() or not 0 < int(p) < 65536:
-                errors.append(f"Line {n}: bad port {p}")
-                continue
-            port = int(p)
-        if not NAME_RE.match(name):
-            errors.append(f"Line {n}: '{name}' isn't a usable host name")
-            continue
-        out.append({"name": name, "address": addr, "port": port})
-    return out, errors
 
 
 @router.post("/hosts/new")
 async def host_new(request: Request):
     form = await form_data(request)
-    u = require(request, "operator")
     found, errors = parse_host_lines(str(form.get("hosts", "")))
-    if not found and not errors:
-        errors.append("Enter at least one host.")
-    if not str(form.get("credential_id", "")).isdigit():
-        errors.append("Choose the SSH key to connect with (add one under Settings → SSH keys).")
-    if errors:
-        return render(request, "host_new.html", form=form, errors=errors, http_status=400, **await _choices())
-    gid = int(form["group_id"]) if str(form.get("group_id", "")).isdigit() else None
-    tags = split_words(form.get("tags"))
-    added, existing = [], []
-    for h in found:
-        hid = await db.fetchval(
-            """INSERT INTO hosts (name, address, port, mode, credential_id, group_id, tags)
-               VALUES (%s, %s, %s, 'ssh', %s, %s, %s) ON CONFLICT (name) DO NOTHING RETURNING id""",
-            h["name"], h["address"], h["port"], int(form["credential_id"]), gid, tags)
-        (added if hid else existing).append(hid or h["name"])
-    if added:
-        await fleet.queue_scan(added)
-        await db.audit(u["name"], f"Added {len(added)} SSH host{'s' if len(added) != 1 else ''}")
+    try:
+        if errors:
+            raise invalid(errors)
+        r = await host_actions.add_ssh(who(request), found, _int(form.get("credential_id")),
+                                       _int(form.get("group_id")), split_words(form.get("tags")))
+    except ActionError as e:
+        if e.code != "invalid":
+            raise
+        return render(request, "host_new.html", form=form, errors=e.errors, http_status=400, **await _choices())
+    added, existing = r["added"], r["already_known"]
     msg = f"Added {len(added)} host{'s' if len(added) != 1 else ''}; scanning them now."
     if existing:
         msg += f" Already known, left alone: {', '.join(existing[:10])}."
@@ -221,134 +136,81 @@ async def host_new(request: Request):
 
 # ─── One host ───────────────────────────────────────────────────────────────
 
-async def _host(host_id: int) -> dict:
-    h = await db.fetchone("""SELECT h.*, g.name AS group_name, c.name AS key_name, c.username AS key_user
-                               FROM hosts h LEFT JOIN groups g ON g.id = h.group_id
-                               LEFT JOIN ssh_credentials c ON c.id = h.credential_id WHERE h.id = %s""", host_id)
-    if not h:
-        raise HTTPException(404, "No such host")
-    return h
-
-
 @router.get("/hosts/{host_id}", response_class=HTMLResponse)
 async def host_page(request: Request, host_id: int, kind: str = "all"):
-    h = await _host(host_id)
-    pending = await db.fetch("""SELECT * FROM pending_updates WHERE host_id = %s AND current IS NOT NULL
-                                ORDER BY is_security DESC,
-                                         array_position(ARRAY['critical','important','moderate','low'], severity),
-                                         is_kernel DESC, name""", host_id)
-    held = set(h["held"] or [])
-    for p in pending:
-        p["held"] = any(fnmatch.fnmatchcase(p["name"], pat) for pat in held)
-    counts = {"all": len(pending), "security": sum(p["is_security"] for p in pending),
-              "kernel": sum(p["is_kernel"] for p in pending), "held": sum(p["held"] for p in pending)}
-    shown = {"security": [p for p in pending if p["is_security"]], "kernel": [p for p in pending if p["is_kernel"]],
-             "held": [p for p in pending if p["held"]]}.get(kind, pending)
-    new_pkgs = await db.fetchval("SELECT COUNT(*) FROM pending_updates WHERE host_id = %s AND current IS NULL",
-                                 host_id)
+    p = who(request)
+    h = await host_actions.get_host(p, host_id)
+    pend = await host_actions.pending(p, host_id, kind)
+    hist = await host_actions.history(p, host_id)
     history = await db.fetch("""SELECT t.*, r.title, r.id AS run_id FROM tasks t LEFT JOIN runs r ON r.id = t.run_id
                                  WHERE t.host_id = %s ORDER BY t.id DESC LIMIT 12""", host_id)
-    changes = await db.fetch("""SELECT * FROM package_changes WHERE host_id = %s ORDER BY at DESC, name
-                                 LIMIT 40""", host_id)
-    active = await db.fetchone("""SELECT t.*, r.title FROM tasks t LEFT JOIN runs r ON r.id = t.run_id
-                                   WHERE t.host_id = %s AND t.status IN ('queued','running')
-                                   ORDER BY t.id LIMIT 1""", host_id)
-    policies = await db.fetch("SELECT id, name, enabled, target FROM policies ORDER BY name")
-    applies = [p for p in policies if host_id in await fleet.resolve_target(p["target"])] if policies else []
-    server_agent = gateway.agent_bundle()
-    twins = await db.fetch("SELECT id, name FROM hosts WHERE machine_id = %s AND id <> %s ORDER BY name",
-                           h["machine_id"], host_id) if h["machine_id"] else []
-    return render(request, "host.html", h=h, server_agent=server_agent, twins=twins, pending=shown, counts=counts, kind=kind, new_pkgs=new_pkgs,
-                  history=history, changes=changes, active_task=active, policies=applies, **await _choices())
+    return render(request, "host.html", h=h, server_agent=gateway.agent_bundle(), twins=h["same_machine_id"],
+                  pending=pend["updates"], counts=pend["counts"], kind=kind, new_pkgs=pend["new_packages"],
+                  history=history, changes=hist["changes"], active_task=h["active_task"], policies=h["policies"],
+                  **await _choices())
 
 
 @router.post("/hosts/{host_id}/action")
 async def host_action(request: Request, host_id: int):
     form = await form_data(request)
-    u = require(request, "operator")
-    h = await _host(host_id)
+    p = who(request)
+    back = f"/hosts/{host_id}"
     action = form.get("action")
+    target = {"hosts": [host_id]}
+    reboot = form.get("reboot") or "never"
     if action == "scan":
-        await fleet.queue_scan([host_id])
+        h = await host_actions.get_host(p, host_id)
+        await host_actions.scan(p, [host_id])
         flash(request, f"Scanning {h['name']}.")
-        return redirect(f"/hosts/{host_id}")
-    picked = [p for p in as_list(form.get("pkg")) if "|" in p]
+        return redirect(back)
+    picked = [x.split("|", 1) for x in as_list(form.get("pkg")) if "|" in x]
     if action in ("apply_selected", "schedule_selected"):
         if not picked:
             flash(request, "Tick the updates to install first.", "bad")
-            return redirect(f"/hosts/{host_id}")
-        rows = {(r["name"], r["arch"]): r for r in await db.fetch(
-            "SELECT name, arch, available FROM pending_updates WHERE host_id = %s", host_id)}
-        pkgs = []
-        for p in picked:
-            name, arch = p.split("|", 1)
-            if (name, arch) in rows:
-                pkgs.append({"name": name, "arch": arch, "version": rows[(name, arch)]["available"]})
+            return redirect(back)
+        chosen = {host_id: [{"name": n, "arch": a} for n, a in picked]}
         if action == "schedule_selected":
-            request.session["book_pins"] = {str(host_id): pkgs}
+            may(request, "bookings.create")
+            pins, bounce = await attempt(request, run_actions.pin_picked(chosen), back)
+            if bounce:
+                return bounce
+            request.session["book_pins"] = pins
             return redirect(f"/schedules/book?host={host_id}&pinned=1")
-        run_id = await fleet.create_run(kind="apply", title=f"{len(pkgs)} picked updates", actor=u["name"],
-                                        host_ids=[host_id], reboot=form.get("reboot") or "never",
-                                        selection={"mode": "packages", "packages": {str(host_id): pkgs}})
-        return redirect(f"/runs/{run_id}")
+        return await _start(request, back, kind="apply", target=target, picked=chosen, reboot=reboot)
     if action in ("apply_security", "apply_all"):
         sel = {"mode": "kinds", "kinds": ["security"]} if action == "apply_security" else {"mode": "all"}
-        run_id = await fleet.create_run(kind="apply", title="Security updates" if action == "apply_security"
-                                        else "All updates", actor=u["name"], host_ids=[host_id], selection=sel,
-                                        reboot=form.get("reboot") or "never")
-        return redirect(f"/runs/{run_id}")
-    if action == "reboot":
-        run_id = await fleet.create_run(kind="reboot", title="Reboot", actor=u["name"], host_ids=[host_id])
-        return redirect(f"/runs/{run_id}")
-    if action == "auto_off":
-        run_id = await fleet.create_run(kind="auto_off", title=fleet.AUTO_OFF_TITLE, actor=u["name"],
-                                        host_ids=[host_id])
-        return redirect(f"/runs/{run_id}")
+        return await _start(request, back, kind="apply", target=target, selection=sel, reboot=reboot,
+                            title="Security updates" if action == "apply_security" else "All updates")
+    if action in ("reboot", "auto_off"):
+        return await _start(request, back, kind=action, target=target)
     if action == "agent_update":
-        run_id = await gateway.start_agent_update(u["name"], [host_id], "Update agent")
-        if run_id is None:
-            flash(request, "This agent is already the server's, or too old to update itself.", "info")
-            return redirect(f"/hosts/{host_id}")
-        return redirect(f"/runs/{run_id}")
+        return await _start(request, back, kind="agent_update", target=target, title="Update agent")
     raise HTTPException(400, "Unknown action")
 
 
 @router.post("/hosts/{host_id}/edit")
 async def host_edit(request: Request, host_id: int):
     form = await form_data(request)
-    u = require(request, "operator")
-    h = await _host(host_id)
-    gid = int(form["group_id"]) if str(form.get("group_id", "")).isdigit() else None
-    tags = split_words(form.get("tags"))
-    held = split_words(form.get("held"))
-    name = str(form.get("name", h["name"])).strip()
-    if name != h["name"]:
-        if not NAME_RE.match(name):
-            flash(request, "Names use letters, digits, dots, dashes and underscores.", "bad")
-            return redirect(f"/hosts/{host_id}")
-        if await db.fetchval("SELECT EXISTS (SELECT 1 FROM hosts WHERE name = %s)", name):
-            flash(request, f"Another host is already called {name}.", "bad")
-            return redirect(f"/hosts/{host_id}")
-        await db.execute("UPDATE hosts SET name = %s WHERE id = %s", name, host_id)
-    if h["mode"] == "ssh":
-        addr = str(form.get("address", h["address"])).strip()
-        port = int(form["port"]) if str(form.get("port", "")).isdigit() else h["port"]
-        cred = int(form["credential_id"]) if str(form.get("credential_id", "")).isdigit() else h["credential_id"]
-        await db.execute("UPDATE hosts SET address = %s, port = %s, credential_id = %s WHERE id = %s",
-                         addr, port, cred, host_id)
-    await db.execute("UPDATE hosts SET group_id = %s, tags = %s, held = %s WHERE id = %s", gid, tags, held, host_id)
-    await db.audit(u["name"], f"Edited host {h['name']}")
-    flash(request, "Saved.")
-    return redirect(f"/hosts/{host_id}")
+    changes = {"name": str(form.get("name", "")).strip(), "group_id": _int(form.get("group_id")),
+               "tags": split_words(form.get("tags")), "held": split_words(form.get("held"))}
+    if not changes["name"]:
+        del changes["name"]
+    if "address" in form:
+        changes["address"] = str(form.get("address", "")).strip()
+    if _int(form.get("port")):
+        changes["port"] = _int(form.get("port"))
+    if _int(form.get("credential_id")):
+        changes["credential_id"] = _int(form.get("credential_id"))
+    _, bounce = await attempt(request, host_actions.edit(who(request), host_id, **changes), f"/hosts/{host_id}")
+    if not bounce:
+        flash(request, "Saved.")
+    return bounce or redirect(f"/hosts/{host_id}")
 
 
 @router.post("/hosts/{host_id}/forget-key")
 async def host_forget_key(request: Request, host_id: int):
     await form_data(request)
-    u = require(request, "admin")
-    h = await _host(host_id)
-    await db.execute("UPDATE hosts SET ssh_host_key = NULL, last_error = NULL WHERE id = %s", host_id)
-    await db.audit(u["name"], f"Cleared the pinned SSH host key of {h['name']}")
+    await host_actions.forget_key(who(request), host_id)
     flash(request, "The pinned key is cleared; the next connection pins whatever key the host offers.", "info")
     return redirect(f"/hosts/{host_id}")
 
@@ -356,9 +218,7 @@ async def host_forget_key(request: Request, host_id: int):
 @router.post("/hosts/{host_id}/delete")
 async def host_delete(request: Request, host_id: int):
     await form_data(request)
-    u = require(request, "admin")
-    h = await _host(host_id)
-    await db.execute("DELETE FROM hosts WHERE id = %s", host_id)
-    await db.audit(u["name"], f"Removed host {h['name']}")
-    flash(request, f"Removed {h['name']}.")
+    r = await host_actions.delete(who(request), [host_id])
+    flash(request, f"Removed {r['removed'][0]}.")
     return redirect("/hosts")
+
