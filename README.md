@@ -170,6 +170,12 @@ Events, and retries are safe with an `Idempotency-Key`. Reference, examples and
 every endpoint with its role: [docs/api.md](docs/api.md), and
 `/api/v1/docs` on your own server.
 
+**`fw`**, the command-line client, wraps it: `pipx install ./cli`, then
+`fw login --url https://fleetwright:8443` and, for example,
+`fw run apply --group web --kinds security --batch 10% --canary --yes --wait`.
+JSON output, stable exit codes and `--dry-run` make it safe to script, or to hand
+to an AI agent with a viewer token. See [cli/README.md](cli/README.md).
+
 ## Agentless hosts
 
 FleetWright connects as the key's user and runs `sudo -n python3 -`, sending

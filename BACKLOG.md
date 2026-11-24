@@ -19,9 +19,13 @@ Nothing at the moment: pick the next ones from below.
 - [#18](https://github.com/chrisnock-personal/fleetwright/issues/18) Snap: see snap updates and bring them into windows and policies
 - [#29](https://github.com/chrisnock-personal/fleetwright/issues/29) Flatpak (future, for desktops; needs #18)
 - [#19](https://github.com/chrisnock-personal/fleetwright/issues/19) Test and document Debian, RHEL, Rocky and Alma
+- [#34](https://github.com/chrisnock-personal/fleetwright/issues/34) Data at rest: the database and certificate volumes aren't encrypted
 
 ## Fixes and tidy-ups
 
+- [#31](https://github.com/chrisnock-personal/fleetwright/issues/31) Audit the Python dependencies (pip-audit): they've never been checked
+- [#32](https://github.com/chrisnock-personal/fleetwright/issues/32) The key-rotation test's fake key trips secret scanners
+- [#33](https://github.com/chrisnock-personal/fleetwright/issues/33) Build SQL identifiers with psycopg.sql instead of f-strings
 - [#20](https://github.com/chrisnock-personal/fleetwright/issues/20) Relabel or remove "Stop at once" when a window closes
 - [#21](https://github.com/chrisnock-personal/fleetwright/issues/21) Show agents that missed a certificate change, with the re-enrol command
 - [#22](https://github.com/chrisnock-personal/fleetwright/issues/22) Move the sign-in throttle and setup code to Postgres
