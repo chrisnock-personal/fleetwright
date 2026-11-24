@@ -22,8 +22,6 @@ Nothing at the moment: pick the next ones from below.
 
 ## Fixes and tidy-ups
 
-- [#32](https://github.com/chrisnock-personal/fleetwright/issues/32) The key-rotation test's fake key trips secret scanners
-- [#33](https://github.com/chrisnock-personal/fleetwright/issues/33) Build SQL identifiers with psycopg.sql instead of f-strings
 - [#20](https://github.com/chrisnock-personal/fleetwright/issues/20) Relabel or remove "Stop at once" when a window closes
 - [#21](https://github.com/chrisnock-personal/fleetwright/issues/21) Show agents that missed a certificate change, with the re-enrol command
 - [#22](https://github.com/chrisnock-personal/fleetwright/issues/22) Move the sign-in throttle and setup code to Postgres
