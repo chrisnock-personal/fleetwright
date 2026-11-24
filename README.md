@@ -238,6 +238,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 
+`requirements.txt` has the version ranges; the image installs `requirements.lock`,
+the exact versions resolved from them inside the image's base and checked with
+`pip-audit -r requirements.lock --no-deps --disable-pip`. Its header says how to
+refresh it. The agent and `fw` need nothing from PyPI.
+
 Tested against Ubuntu 24.04 and Fedora 44 cloud images.
 
 ## Licence

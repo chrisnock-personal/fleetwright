@@ -4,8 +4,9 @@ LABEL org.opencontainers.image.title="FleetWright" \
       org.opencontainers.image.description="Manages package updates on Ubuntu and Fedora servers, by agent or over SSH"
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# requirements.lock: exact, audited versions (see its header); requirements.txt has the ranges.
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 COPY fleetwright/ fleetwright/
 COPY agent/ agent/
