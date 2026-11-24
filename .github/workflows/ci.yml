@@ -1,0 +1,62 @@
+# Tests, a dependency audit, a secret scan of the whole history, and the integration
+# test (the stack, SSH hosts, and agents on Ubuntu and Fedora). The audit also runs
+# weekly: new advisories appear without any change here.
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Unit tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.lock pytest pyflakes
+      - run: python -m pyflakes fleetwright agent cli tests
+      - run: python -m pytest -q
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.lock --no-deps --disable-pip
+      - run: pip-audit -r requirements-dev.txt
+
+  secrets:
+    name: Secret scan (whole history)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 \
+            git /repo --redact --no-banner --gitleaks-ignore-path /repo/.gitleaksignore
+
+  integration:
+    name: Integration (stack, SSH hosts, Ubuntu and Fedora agents)
+    if: github.event_name != 'schedule'
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/integration/run.sh

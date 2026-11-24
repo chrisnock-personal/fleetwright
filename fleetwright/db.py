@@ -3,13 +3,14 @@ db.py
 ~~~~~
 Postgres access (psycopg 3, async). One pool per process.
 
-The schema lives in schema.sql and is applied at every start; every
-statement in it is idempotent. Postgres is also the job queue: workers
+The schema lives in schema.sql and is applied at start when it has changed
+(its SHA-256 is kept in settings); every statement in it is idempotent. Postgres is also the job queue: workers
 claim tasks with ``FOR UPDATE SKIP LOCKED`` and are woken by NOTIFY.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -53,15 +54,29 @@ def pool() -> AsyncConnectionPool:
 
 
 async def migrate() -> None:
+    """Apply schema.sql, unless this exact version already is. The web process and the
+    worker both call this at start: the second must not rerun the DDL while the first is
+    already working, or its table locks deadlock with the worker claiming tasks."""
     sql = (Path(__file__).parent / "schema.sql").read_text()
+    digest = hashlib.sha256(sql.encode()).hexdigest()
     async with pool().connection() as conn:
         # Two processes starting together must not both run the DDL.
         await conn.execute("SELECT pg_advisory_lock(42424242)")
         try:
+            have = None
+            if (await (await conn.execute("SELECT to_regclass('settings') IS NOT NULL AS ok")).fetchone())["ok"]:
+                row = await (await conn.execute(
+                    "SELECT value FROM settings WHERE key = 'schema_sha256'")).fetchone()
+                have = row["value"] if row else None
+            if have == digest:
+                log.info("schema up to date (unchanged)")
+                return
             await conn.execute(sql)
+            await conn.execute("""INSERT INTO settings (key, value) VALUES ('schema_sha256', %s)
+                                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""", (digest,))
         finally:
             await conn.execute("SELECT pg_advisory_unlock(42424242)")
-    log.info("schema up to date")
+    log.info("schema applied")
 
 
 @asynccontextmanager
