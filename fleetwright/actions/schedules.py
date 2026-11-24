@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 from typing import Optional
 
+from psycopg import sql
+
 from .. import db, fleet, notify, pkgops
 from ..db import J
 from ..schedule import describe, next_run
@@ -196,12 +198,15 @@ async def save_policy(who: Principal, policy: dict, policy_id: Optional[int] = N
     vals = [J(p[c]) if c in ("target", "selection") else p[c] for c in POLICY_FIELDS]
     try:
         if policy_id:
-            await db.execute(f"UPDATE policies SET {', '.join(c + ' = %s' for c in POLICY_FIELDS)}, "
-                             "next_run_at = %s WHERE id = %s", *vals, nxt, policy_id)
+            sets = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in POLICY_FIELDS)
+            await db.execute(sql.SQL("UPDATE policies SET {}, next_run_at = %s WHERE id = %s").format(sets),
+                             *vals, nxt, policy_id)
         else:
+            cols = sql.SQL(", ").join(sql.Identifier(c) for c in POLICY_FIELDS)
+            marks = sql.SQL(", ").join(sql.Placeholder() for _ in POLICY_FIELDS)
             policy_id = await db.fetchval(
-                f"INSERT INTO policies ({', '.join(POLICY_FIELDS)}, next_run_at, created_by) "
-                f"VALUES ({', '.join(['%s'] * len(POLICY_FIELDS))}, %s, %s) RETURNING id", *vals, nxt, who.actor)
+                sql.SQL("INSERT INTO policies ({}, next_run_at, created_by) VALUES ({}, %s, %s) RETURNING id")
+                .format(cols, marks), *vals, nxt, who.actor)
     except Exception as e:
         if "unique" in str(e).lower():
             raise invalid("Another policy already has that name.") from e

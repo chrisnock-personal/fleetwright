@@ -21,6 +21,7 @@ import signal
 import time
 
 import psycopg
+from psycopg import sql
 
 from . import config, db, fleet, notify, sshrun
 
@@ -172,7 +173,7 @@ class Worker:
         while not self.stopping:
             try:
                 async with await psycopg.AsyncConnection.connect(config.DATABASE_URL, autocommit=True) as conn:
-                    await conn.execute(f"LISTEN {fleet.TASK_CHANNEL}")
+                    await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(fleet.TASK_CHANNEL)))
                     async for _ in conn.notifies():
                         self.wake.set()
             except (psycopg.Error, OSError) as e:

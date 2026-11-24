@@ -211,23 +211,29 @@ apply_updates = no
 
 # ─── Rotating FLEETWRIGHT_SECRET_KEY ───────────────────────────────────────
 
+# Plain words, not anything shaped like a real key, so secret scanners have nothing to flag.
+STORED = "a stored ssh key, in a test"
+OLD_KEY = "the first secret key of this test"
+NEW_KEY = "the second secret key of this test"
+
+
 def test_secrets_survive_a_key_rotation(monkeypatch):
     from fleetwright import config, security
-    monkeypatch.setattr(config, "SECRET_KEY", "old-key-0123456789abcdef")
+    monkeypatch.setattr(config, "SECRET_KEY", OLD_KEY)
     monkeypatch.setattr(config, "SECRET_KEY_PREVIOUS", [])
-    old = security.encrypt("-----BEGIN OPENSSH PRIVATE KEY-----")
+    old = security.encrypt(STORED)
     assert security.under_current_key(old)
 
-    monkeypatch.setattr(config, "SECRET_KEY", "new-key-fedcba9876543210")
+    monkeypatch.setattr(config, "SECRET_KEY", NEW_KEY)
     assert not security.under_current_key(old)
     with pytest.raises(security.UndecryptableSecret, match="FLEETWRIGHT_SECRET_KEY_PREVIOUS"):
         security.decrypt(old)                      # the new key alone can't read it
 
-    monkeypatch.setattr(config, "SECRET_KEY_PREVIOUS", ["old-key-0123456789abcdef"])
-    assert security.decrypt(old) == "-----BEGIN OPENSSH PRIVATE KEY-----"
+    monkeypatch.setattr(config, "SECRET_KEY_PREVIOUS", [OLD_KEY])
+    assert security.decrypt(old) == STORED
     new = security.reencrypt(old)
     assert security.under_current_key(new)
     assert security.under_current_key(security.encrypt("x"))   # new secrets: always the current key
 
     monkeypatch.setattr(config, "SECRET_KEY_PREVIOUS", [])     # the old key can go now
-    assert security.decrypt(new) == "-----BEGIN OPENSSH PRIVATE KEY-----"
+    assert security.decrypt(new) == STORED

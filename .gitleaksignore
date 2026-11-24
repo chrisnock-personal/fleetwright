@@ -1,0 +1,3 @@
+# Findings gitleaks reports that aren't secrets. Each is commit:file:rule:line.
+# A test's placeholder that looked like a private key (it was never one); replaced, but the commit stays in history (#32).
+784389af880558dd9b52f1619471759275f014d6:tests/test_logic.py:private-key:218

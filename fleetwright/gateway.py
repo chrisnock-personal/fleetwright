@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 import psycopg
+from psycopg import sql
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response
 
@@ -381,8 +382,12 @@ async def finish_reboots(host_id: int, boot_id: Optional[str]) -> None:
 
 
 def outdated_sql() -> str:
-    """Agent hosts whose agent isn't this server's (the bundle id is hex, safe to inline)."""
-    return f"(h.mode = 'agent' AND h.agent_bundle IS DISTINCT FROM '{agent_bundle()['bundle']}')"
+    """Agent hosts whose agent isn't this server's. A constant fragment: the bundle id comes
+    from hashing this server's own agent files, and is checked to be hex before it's inlined."""
+    bundle = agent_bundle()["bundle"]
+    if not re.fullmatch(r"[0-9a-f]{16}", bundle):
+        raise ValueError(f"unexpected agent bundle id {bundle!r}")
+    return f"(h.mode = 'agent' AND h.agent_bundle IS DISTINCT FROM '{bundle}')"
 
 
 async def start_agent_update(actor: str, host_ids: list[int], title: str = "Update agents") -> Optional[int]:
@@ -460,7 +465,7 @@ async def listener() -> None:
     while True:
         try:
             async with await psycopg.AsyncConnection.connect(config.DATABASE_URL, autocommit=True) as c:
-                await c.execute(f"LISTEN {fleet.TASK_CHANNEL}")
+                await c.execute(sql.SQL("LISTEN {}").format(sql.Identifier(fleet.TASK_CHANNEL)))
                 async for _ in c.notifies():
                     _wake.set()
         except (psycopg.Error, OSError) as e:

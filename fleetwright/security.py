@@ -99,10 +99,14 @@ async def rotate_secrets() -> dict:
     """At startup: re-encrypt whatever isn't under the current key yet, and check that
     the stored secrets can be read at all. Returns counts for the log and the
     Settings page: {"reencrypted", "unreadable", "key_changed"}."""
+    from psycopg import sql
+
     from . import db
     out = {"reencrypted": 0, "unreadable": 0, "key_changed": False}
     for table, idcol, col in ENCRYPTED_COLUMNS:
-        for row in await db.fetch(f"SELECT {idcol} AS id, {col} AS v FROM {table} WHERE {col} IS NOT NULL"):
+        names = {"t": sql.Identifier(table), "id": sql.Identifier(idcol), "col": sql.Identifier(col)}
+        for row in await db.fetch(sql.SQL("SELECT {id} AS id, {col} AS v FROM {t} WHERE {col} IS NOT NULL")
+                                  .format(**names)):
             if under_current_key(row["v"]):
                 continue
             try:
@@ -110,7 +114,7 @@ async def rotate_secrets() -> dict:
             except InvalidToken:
                 out["unreadable"] += 1
                 continue
-            await db.execute(f"UPDATE {table} SET {col} = %s WHERE {idcol} = %s", new, row["id"])
+            await db.execute(sql.SQL("UPDATE {t} SET {col} = %s WHERE {id} = %s").format(**names), new, row["id"])
             out["reencrypted"] += 1
     check = await db.fetchval("SELECT value FROM settings WHERE key = %s", KEY_CHECK)
     if check and not under_current_key(check):
