@@ -15,8 +15,7 @@ Nothing at the moment: pick the next ones from below.
 - [#14](https://github.com/chrisnock-personal/fleetwright/issues/14) Show Ubuntu phased updates
 - [#15](https://github.com/chrisnock-personal/fleetwright/issues/15) Known host keys when adding SSH hosts
 - [#16](https://github.com/chrisnock-personal/fleetwright/issues/16) A narrower agentless mode
-- [#17](https://github.com/chrisnock-personal/fleetwright/issues/17) Full REST API with the same roles as the UI, for headless use
-- [#28](https://github.com/chrisnock-personal/fleetwright/issues/28) CLI (`fw`) wrapping the API, for the command line and AI agents (needs #17)
+- [#28](https://github.com/chrisnock-personal/fleetwright/issues/28) CLI (`fw`) wrapping the API, for the command line and AI agents
 - [#18](https://github.com/chrisnock-personal/fleetwright/issues/18) Snap: see snap updates and bring them into windows and policies
 - [#29](https://github.com/chrisnock-personal/fleetwright/issues/29) Flatpak (future, for desktops; needs #18)
 - [#19](https://github.com/chrisnock-personal/fleetwright/issues/19) Test and document Debian, RHEL, Rocky and Alma
