@@ -35,7 +35,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pkgops  # noqa: E402
 
-AGENT_VERSION = "0.3.0"
+AGENT_VERSION = "0.3.1"
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # The files a self-update may replace; the server can't name any other path.
 BUNDLE_FILES = ("fleetwright_agent.py", "pkgops.py")

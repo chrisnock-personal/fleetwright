@@ -67,7 +67,9 @@ otherwise.
   `FOR UPDATE SKIP LOCKED` and are woken by `NOTIFY`, so you can run several.
 - **Agents** keep one WebSocket open; they need no inbound port. They scan
   every `FLEETWRIGHT_SCAN_INTERVAL_MIN` (with jitter) and run only the
-  operations pkgops offers, never arbitrary commands.
+  operations pkgops offers, never arbitrary commands. Each keeps its own uuid
+  in `/etc/fleetwright-agent/instance-id`, so containers from one image that
+  share a machine id, hostname and boot id enrol as separate hosts.
 - **Selections**: everything; chosen kinds (security with a minimum
   severity, kernel, bug fixes, enhancements) plus include/exclude patterns;
   or specific packages pinned to the version seen when they were picked.
