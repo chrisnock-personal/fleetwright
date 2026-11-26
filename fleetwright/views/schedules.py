@@ -13,7 +13,7 @@ from .. import db, fleet
 from ..actions import schedules as sched
 from ..actions.core import ActionError
 from ..schedule import WEEKDAYS, next_run
-from ..webcommon import as_list, attempt, flash, form_data, may, redirect, render, split_words, who
+from ..webcommon import as_list, attempt, flash, form_data, redirect, render, require_action, split_words, who
 
 router = APIRouter()
 
@@ -80,7 +80,7 @@ async def _policy_page(request: Request, p: dict, errors: Optional[list] = None,
 
 @router.get("/schedules/policies/new", response_class=HTMLResponse)
 async def policy_new(request: Request):
-    may(request, "policies.save")
+    require_action(request, "policies.save")
     return await _policy_page(request, dict(NEW_POLICY))
 
 
@@ -176,7 +176,7 @@ def _parse_local(value: str) -> Optional[datetime]:
 
 @router.get("/schedules/book", response_class=HTMLResponse)
 async def book_page(request: Request, host: list[int] = Query(default=[]), pinned: int = 0):
-    may(request, "bookings.create")
+    require_action(request, "bookings.create")
     ids = host or []
     hosts = await db.fetch("SELECT id, name FROM hosts WHERE id = ANY(%s) ORDER BY name", ids)
     pins = request.session.get("book_pins") if pinned else None

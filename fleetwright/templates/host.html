@@ -21,14 +21,16 @@
         {% else %}<span>SSH as {{ h.key_user or '?' }} · key {{ h.key_name or 'none' }}</span>{% endif %}
       </div>
     </div>
-    {% if can(current_user, 'operator') %}
+    {% if may('hosts.scan') or may('runs.start') %}
     <form class="actions-row" method="post" action="/hosts/{{ h.id }}/action">
       {{ csrf_field() }}
-      <button type="submit" class="btn" name="action" value="scan">Scan now</button>
+      {% if may('hosts.scan') %}<button type="submit" class="btn" name="action" value="scan">Scan now</button>{% endif %}
+      {% if may('runs.start') %}
       <button type="submit" class="btn" name="action" value="reboot">Reboot</button>
       {% if h.mode == 'agent' and h.agent_bundle and h.agent_bundle != server_agent.bundle %}<button type="submit" class="btn" name="action" value="agent_update">Update agent</button>{% endif %}
       <button type="submit" class="btn" name="action" value="apply_all" {{ 'disabled' if not counts.all }}>Apply all ({{ counts.all }})</button>
       <button type="submit" class="btn primary" name="action" value="apply_security" {{ 'disabled' if not counts.security }}>Apply security ({{ counts.security }})</button>
+      {% endif %}
     </form>
     {% endif %}
   </div>
@@ -41,7 +43,7 @@
   {% if autos %}<div class="flash warn" role="status"><div><strong>Updates are also installed outside FleetWright.</strong>
     {% for a in autos %}<span class="mono">{{ a.tool }}</span> {{ a.detail }}{{ '; ' if not loop.last else '.' }}{% endfor %}
     If it runs during a FleetWright install, its changes are recorded as FleetWright's.
-    {% if can(current_user, 'operator') %}<form method="post" action="/hosts/{{ h.id }}/action" class="inline-form" data-confirm="Stop {{ autos|map(attribute='tool')|join(' and ') }} installing updates on {{ h.name }}? FleetWright's own policies and installs are then the only way updates arrive.">{{ csrf_field() }}<button class="btn small" type="submit" name="action" value="auto_off">Turn off</button></form>{% endif %}
+    {% if may('runs.start') %}<form method="post" action="/hosts/{{ h.id }}/action" class="inline-form" data-confirm="Stop {{ autos|map(attribute='tool')|join(' and ') }} installing updates on {{ h.name }}? FleetWright's own policies and installs are then the only way updates arrive.">{{ csrf_field() }}<button class="btn small" type="submit" name="action" value="auto_off">Turn off</button></form>{% endif %}
   </div></div>{% endif %}
   {% if active_task %}<div class="flash info"><div><strong>{{ "Running" if active_task.status == "running" else "Queued" }}:</strong> {{ active_task.op }}{% if active_task.title %} for <a href="/runs/{{ active_task.run_id }}?task={{ active_task.id }}">{{ active_task.title }}</a>{% endif %}{% if active_task.detail %} · {{ active_task.detail }}{% endif %}</div></div>{% endif %}
 
@@ -68,13 +70,13 @@
         {% if pending %}
         <div class="scroll"><table>
           <thead><tr>
-            <th style="width:44px">{% if can(current_user, 'operator') %}<input class="cb" type="checkbox" data-check-all="pkg" aria-label="Tick every update shown">{% endif %}</th>
+            <th style="width:44px">{% if may('runs.start') or may('bookings.create') %}<input class="cb" type="checkbox" data-check-all="pkg" aria-label="Tick every update shown">{% endif %}</th>
             <th>Package</th><th>Installed → available</th><th>Type</th><th>Source</th>
           </tr></thead>
           <tbody>
           {% for p in pending %}
             <tr>
-              <td>{% if can(current_user, 'operator') and not p.held %}<input class="cb" type="checkbox" name="pkg" value="{{ p.name }}|{{ p.arch }}" aria-label="Tick {{ p.name }}">{% endif %}</td>
+              <td>{% if (may('runs.start') or may('bookings.create')) and not p.held %}<input class="cb" type="checkbox" name="pkg" value="{{ p.name }}|{{ p.arch }}" aria-label="Tick {{ p.name }}">{% endif %}</td>
               <td class="mono" style="font-size:13px">{{ p.name }}{% if p.arch not in ('', 'all', 'noarch', 'amd64', 'x86_64') %}<span class="tone-muted">:{{ p.arch }}</span>{% endif %}</td>
               <td><span class="ver">{{ p.current }} → <b>{{ p.available }}</b></span></td>
               <td><div class="tagset">
@@ -89,14 +91,14 @@
           {% endfor %}
           </tbody>
         </table></div>
-        {% if can(current_user, 'operator') %}
+        {% if may('runs.start') or may('bookings.create') %}
         <div class="foot">
           <label class="actions-row">Reboot afterwards
             <select name="reboot"><option value="never">Never</option><option value="if_needed">If needed</option><option value="always">Always</option></select>
           </label>
           <div class="actions-row">
-            <button type="submit" class="btn small" name="action" value="schedule_selected">Schedule ticked…</button>
-            <button type="submit" class="btn small primary" name="action" value="apply_selected">Apply ticked now</button>
+            {% if may('bookings.create') %}<button type="submit" class="btn small" name="action" value="schedule_selected">Schedule ticked…</button>{% endif %}
+            {% if may('runs.start') %}<button type="submit" class="btn small primary" name="action" value="apply_selected">Apply ticked now</button>{% endif %}
           </div>
         </div>
         {% endif %}
@@ -134,7 +136,7 @@
           {% if h.mode == 'ssh' %}<div>Pinned host key<b class="mono">{{ (h.ssh_host_key or 'not yet')[:40] }}{{ '…' if h.ssh_host_key }}</b></div>{% endif %}
           <div>Added<b>{{ h.created_at|when }}</b></div>
         </div>
-        {% if can(current_user, 'operator') %}
+        {% if may('hosts.edit') %}
         <details class="more" style="padding:0 20px 16px">
           <summary>Edit</summary>
           <form method="post" action="/hosts/{{ h.id }}/edit" style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
@@ -150,12 +152,14 @@
             <div class="field"><label for="held">Never install</label><input class="input mono" id="held" name="held" value="{{ h.held|join(', ') }}" placeholder="nginx, postgresql-*"><span class="help">Package names; * matches anything.</span></div>
             <button type="submit" class="btn primary">Save</button>
           </form>
-          {% if can(current_user, 'admin') %}
+          {% if may('hosts.forget_key') or may('hosts.delete') %}
           <div class="actions-row" style="margin-top:12px">
-            {% if h.mode == 'ssh' and h.ssh_host_key %}
+            {% if may('hosts.forget_key') and h.mode == 'ssh' and h.ssh_host_key %}
             <form method="post" action="/hosts/{{ h.id }}/forget-key" class="inline-form">{{ csrf_field() }}<button class="btn small" type="submit">Forget pinned host key</button></form>
             {% endif %}
+            {% if may('hosts.delete') %}
             <form method="post" action="/hosts/{{ h.id }}/delete" class="inline-form" data-confirm="Remove {{ h.name }} and its history?">{{ csrf_field() }}<button class="btn small danger" type="submit">Remove host</button></form>
+            {% endif %}
           </div>
           {% endif %}
         </details>

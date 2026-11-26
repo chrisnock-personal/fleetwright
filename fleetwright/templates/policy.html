@@ -10,7 +10,7 @@
   <div class="page-head">
     <div><h1>{{ p.name or 'New auto-install policy' }}</h1>
       <p>Installs the kinds of update you choose, by itself, in a window that repeats. Times in UTC.</p></div>
-    {% if p.id and can(current_user, 'operator') %}
+    {% if p.id and may('policies.run_now') %}
     <form class="actions-row" method="post" action="/schedules/policies/{{ p.id }}/action">
       {{ csrf_field() }}
       <button class="btn" name="action" value="run_now" type="submit">Run now</button>
@@ -98,7 +98,7 @@
       </div>
       <label class="opt"><input type="checkbox" name="canary" value="1" {{ 'checked' if p.canary }}><span>Canary first<small>Update one host on its own before the rest, and stop if it fails.</small></span></label>
 
-      <div class="actions"><span></span><div class="end"><a class="btn" href="/schedules">Cancel</a>{% if can(current_user, 'operator') %}<button class="btn primary" type="submit">Save policy</button>{% endif %}</div></div>
+      <div class="actions"><span></span><div class="end"><a class="btn" href="/schedules">Cancel</a>{% if may('policies.save') %}<button class="btn primary" type="submit">Save policy</button>{% endif %}</div></div>
     </form>
 
     <div class="side">
@@ -117,7 +117,7 @@
         <div class="hist"><div><a href="/runs/{{ r.id }}">#{{ r.id }} {{ r.created_at|when }}</a><span class="detail">{{ r.note or '' }}</span></div><span class="badge {{ r.status|tone }}">{{ r.status|label }}</span></div>
         {% else %}<p class="empty">Not run yet.</p>{% endfor %}
       </section>
-      {% if can(current_user, 'operator') %}
+      {% if may('policies.delete') %}
       <form method="post" action="/schedules/policies/{{ p.id }}/action" data-confirm="Delete the policy {{ p.name }}?">
         {{ csrf_field() }}<button class="btn danger" name="action" value="delete" type="submit">Delete policy</button>
       </form>

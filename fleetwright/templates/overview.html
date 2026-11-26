@@ -11,8 +11,9 @@
         · {{ t.agents|num }} by agent, {{ t.ssh|num }} by SSH
         {% if t.last_scan %}· last scan {{ t.last_scan|ago }}{% endif %}</p>
     </div>
-    {% if can(current_user, 'operator') %}
+    {% if may('hosts.scan') or may('hosts.add_ssh') or may('bookings.create') %}
     <div class="actions-row">
+      {% if may('hosts.scan') %}
       <form method="post" action="/hosts/scan-all" class="inline-form">
         {{ csrf_field() }}
         <button type="submit" class="btn">
@@ -20,8 +21,9 @@
           Scan all
         </button>
       </form>
-      <a class="btn" href="/hosts/new">Add hosts</a>
-      <a class="btn primary" href="/schedules/book">Schedule an install</a>
+      {% endif %}
+      {% if may('hosts.add_ssh') %}<a class="btn" href="/hosts/new">Add hosts</a>{% endif %}
+      {% if may('bookings.create') %}<a class="btn primary" href="/schedules/book">Schedule an install</a>{% endif %}
     </div>
     {% endif %}
   </div>
