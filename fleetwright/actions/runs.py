@@ -194,5 +194,6 @@ async def retry(who: Principal, run_id: int) -> dict:
     new_id = await fleet.create_run(kind=run["kind"], title=run["title"].removesuffix(" (retry)") + " (retry)",
                                     actor=who.actor, host_ids=hosts, selection=run["selection"],
                                     reboot=run["reboot"], batch_size=run["batch_size"],
-                                    max_failures=run["max_failures"])
+                                    canary=run["canary"], max_failures=run["max_failures"],
+                                    window_end=run["window_end"], on_window_close=run["on_window_close"])
     return {"run_id": new_id}
