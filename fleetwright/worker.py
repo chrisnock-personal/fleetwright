@@ -7,7 +7,8 @@ work through Postgres.
 - claims queued tasks for agentless (SSH) hosts and runs them, up to
   FLEETWRIGHT_SSH_CONCURRENCY at once per worker
 - starts auto-install policies and booked installs when they're due, and
-  moves runs from batch to batch (one worker at a time does this)
+  moves runs from batch to batch (one worker at a time does this, woken by
+  task completions as well as by the periodic tick)
 - queues a scan for SSH hosts not scanned for FLEETWRIGHT_SCAN_INTERVAL_MIN
 - fails tasks that have been running far too long (a worker that died)
 - sends notifications (notify.py), and notices hosts that stay unreachable
@@ -29,6 +30,8 @@ log = logging.getLogger("fleetwright.worker")
 
 SCHEDULER_LOCK = 42424243
 NOTIFY_LOCK = 42424244
+HOUSEKEEPING_INTERVAL = 5       # safety net, even if no NOTIFY ever arrives
+HOUSEKEEPING_DEBOUNCE = 0.2     # coalesce a burst of task completions into one pass
 
 
 class TaskLog:
@@ -158,7 +161,14 @@ class Worker:
     def __init__(self) -> None:
         self.inflight: set[asyncio.Task] = set()
         self.wake = asyncio.Event()
+        self.housekeeping_wake = asyncio.Event()
         self.stopping = False
+
+    def on_notification(self, payload: str) -> None:
+        """A task change wakes claiming; a finished task can also open the next batch."""
+        self.wake.set()
+        if payload == "done":
+            self.housekeeping_wake.set()
 
     async def claim(self) -> None:
         room = config.SSH_CONCURRENCY - len(self.inflight)
@@ -174,11 +184,26 @@ class Worker:
             try:
                 async with await psycopg.AsyncConnection.connect(config.DATABASE_URL, autocommit=True) as conn:
                     await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(fleet.TASK_CHANNEL)))
-                    async for _ in conn.notifies():
-                        self.wake.set()
+                    async for notification in conn.notifies():
+                        self.on_notification(notification.payload)
             except (psycopg.Error, OSError) as e:
                 log.warning("LISTEN connection lost (%s); retrying", e)
                 await asyncio.sleep(5)
+
+    async def wait_for_housekeeping(self) -> None:
+        """Wait for the periodic tick, or for a debounced task-completion wake.
+
+        One NOTIFY per finished task would otherwise mean one scheduler sweep per
+        task in a batch. Clearing before and after the short debounce folds all
+        completions in that window into the single pass that follows it.
+        """
+        try:
+            await asyncio.wait_for(self.housekeeping_wake.wait(), timeout=HOUSEKEEPING_INTERVAL)
+        except asyncio.TimeoutError:
+            return
+        self.housekeeping_wake.clear()
+        await asyncio.sleep(HOUSEKEEPING_DEBOUNCE)
+        self.housekeeping_wake.clear()
 
     async def housekeeping(self) -> None:
         last_scan_check = 0.0
@@ -201,7 +226,7 @@ class Worker:
                             await conn.execute("SELECT pg_advisory_unlock(%s)", (SCHEDULER_LOCK,))
             except Exception:  # noqa: BLE001
                 log.exception("housekeeping failed")
-            await asyncio.sleep(5)
+            await self.wait_for_housekeeping()
 
     async def notifier(self) -> None:
         """Sends queued notifications, apart from housekeeping so a slow mail server
