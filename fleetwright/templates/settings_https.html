@@ -4,7 +4,7 @@
 <div><h1>HTTPS</h1>
   <p class="lede">FleetWright serves its dashboard and agent gateway over HTTPS with this certificate; its plain-HTTP port only redirects here. Agents check the server's certificate before sending their token.</p></div>
 {% if restarting %}
-<div class="flash ok" role="status"><div><strong>Saved. FleetWright is restarting to serve the new certificate.</strong> The new certificate went to {{ agents }} connected agent{{ '' if agents == 1 else 's' }} first, so they keep connecting. Agents that were offline need re-enrolling (or a certificate their system already trusts). Your browser may warn about the new certificate.</div></div>
+<div class="flash ok" role="status"><div><strong>Saved. FleetWright is restarting to serve the new certificate.</strong> The new certificate went to {{ agents }} connected agent{{ '' if agents == 1 else 's' }} first, so they keep connecting. Agents that were offline may need re-enrolling (or a certificate their system already trusts); the hosts below show what FleetWright recorded. Your browser may warn about the new certificate.</div></div>
 <script>setTimeout(function () { location.href = "/settings/https"; }, 6000);</script>
 {% endif %}
 {% if error %}<div class="flash bad" role="alert">{{ error }}</div>{% endif %}
@@ -25,6 +25,32 @@
   </div>
   <p class="hint" style="padding:0 20px 16px">When your browser warns about the self-signed certificate, check that it shows this fingerprint before accepting it.</p>
 </section>
+{% if reenrol.available %}
+<section class="card pad" id="reenrol">
+  <div class="group-head"><h2>Agents that may need re-enrolling</h2><span class="hint">Compared with the current pin <code class="mono">sha256//{{ reenrol.pin }}</code></span></div>
+  {% if reenrol.hosts %}
+  <p>These hosts haven't been seen with the current certificate's pin:</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Host</th><th>What FleetWright knows</th></tr></thead>
+    <tbody>
+    {% for h in reenrol.hosts %}
+      <tr>
+        <td><strong>{{ h.name }}</strong><div class="t-sub plain">{{ 'Connected now' if h.connected else 'Offline' }}{% if not h.connected and h.last_seen %} · last seen {{ h.last_seen|when }}{% endif %}</div></td>
+        <td>{% if h.state == 'old_pin' %}<span class="badge warn">Old pin</span><div class="t-sub plain mono">{{ h.pin }}</div>
+            {% else %}<span class="badge warn">Unknown pin</span><div class="t-sub plain">Not recorded: check this host rather than assuming it needs re-enrolling.</div>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty">Every agent FleetWright has a pin for is on the current one.</p>{% endif %}
+  <p class="hint">An agent that is connected now may already have accepted the new certificate; an unknown pin means FleetWright can't tell. Hosts that were offline for the change can't reconnect with an old pin, so re-enrol those.</p>
+  <h2>Re-enrol command</h2>
+  <p class="hint">Create a fresh enrolment token and run its command on each host above. This is the same install command as <a href="/settings/agents">Settings → Agents</a>, including this server's public-key pin.{% if not reenrol_command %} The token below is a placeholder until you create one.{% endif %}</p>
+  <div class="cmd"><code id="reenrol-command">{{ reenrol_command or command_template }}</code></div>
+  {% if reenrol_command %}<p class="hint">The token is shown only now. Re-enrolling keeps the host, its name and its history.</p>
+  {% else %}<form method="post" action="/settings/https/reenrol">{{ csrf_field() }}<button class="btn primary" type="submit">Create a re-enrol token</button></form>{% endif %}
+</section>
+{% endif %}
 <form class="card pad" method="post" action="/settings/https" enctype="multipart/form-data">
   {{ csrf_field() }}
   <div class="group-head"><h2>Use your own certificate</h2><span class="hint">PEM files. The key must be unencrypted and match the first certificate; put any intermediates after it.</span></div>

@@ -203,7 +203,7 @@ Generated from the code: each endpoint, the lowest role allowed, and what it doe
 
 | Endpoint | Role | What it does |
 |---|---|---|
-| `GET /https` | Admin | The certificate FleetWright serves (names, expiry, fingerprint, the pin agents use). |
+| `GET /https` | Admin | The certificate FleetWright serves (names, expiry, fingerprint, the pin agents use), and agents whose recorded pin is old or unknown. |
 | `POST /https/certificate` | Admin | Install your own certificate (with any chain) and key; agents get it first, then FleetWright restarts. |
 | `POST /https/regenerate` | Admin | Make a new self-signed certificate (with extra names); agents get it first, then FleetWright restarts. |
 

@@ -206,7 +206,9 @@ Running Python as root is as good as root, so treat that key like a root key.
   token. The install command pins the server's public key
   (`curl --pinnedpubkey`), and the agent trusts the exact certificate it
   enrolled with, plus the system CAs. When the certificate changes, connected
-  agents are sent the new one over their existing connection first. Agents
+  agents are sent the new one over their existing connection first. **Settings → HTTPS**
+  lists agents whose recorded pin is old or unknown and gives the re-enrol command
+  (agents acknowledge the new pin, and a successful reconnect records it too). Agents
   refuse plain `http://`/`ws://` unless enrolled with `--insecure`.
 - **SSH host keys are pinned** on first contact. After that only the pinned
   key is accepted in the handshake, so a host offering a different key is

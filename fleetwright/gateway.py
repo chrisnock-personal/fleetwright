@@ -7,9 +7,9 @@ comes back.
 
 Messages, all JSON with a "type":
   agent → server   hello {facts, version} · inventory {result} · log {task_id, text}
-                   result {task_id, result} · pong
+                   result {task_id, result} · trust_ack {pin} · pong
   server → agent   welcome {host_id, scan_interval_min} · task {task_id, op, args}
-                   reboot {task_id} · ping
+                   reboot {task_id} · trust {pem, pin} · ping
 """
 
 from __future__ import annotations
@@ -127,6 +127,9 @@ async def enroll(request: Request):
         hostname = str(facts.get("address") or (request.client.host if request.client else "host"))
     name = NAME_OK.sub("-", hostname)[:120].strip("-") or "host"
     agent_token = security.new_token()
+    # A successful enrolment means this agent trusts the certificate served now
+    # (the install script pins its key), so this is its first known-good pin.
+    pin = server_pin()
     reuse, clone_of = None, None
     machine_id = str(facts.get("machine_id") or "")
     if machine_id:
@@ -148,16 +151,16 @@ async def enroll(request: Request):
             name = f"{name}-{security.new_token(3).lower()}"
     if reuse:
         host_id = reuse["id"]
-        await db.execute("UPDATE hosts SET agent_token_hash = %s WHERE id = %s",
-                         security.token_hash(agent_token), host_id)
+        await db.execute("UPDATE hosts SET agent_token_hash = %s, agent_tls_pin = %s WHERE id = %s",
+                         security.token_hash(agent_token), pin or None, host_id)
         what = f"Re-enrolled agent on {name}"
     else:
         host_id = await db.fetchval(
-            """INSERT INTO hosts (name, address, mode, group_id, tags, agent_token_hash)
-               VALUES (%s, %s, 'agent', %s, %s, %s) RETURNING id""",
+            """INSERT INTO hosts (name, address, mode, group_id, tags, agent_token_hash, agent_tls_pin)
+               VALUES (%s, %s, 'agent', %s, %s, %s, %s) RETURNING id""",
             name, str(facts.get("address") or (request.client.host if request.client else "")),
             row["group_id"], row["tags"],
-            security.token_hash(agent_token))
+            security.token_hash(agent_token), pin or None)
         what = f"Enrolled agent on {name}"
         if clone_of:
             what += (f" (it has the same /etc/machine-id as {clone_of}: a cloned machine? "
@@ -180,6 +183,14 @@ def server_pin() -> str:
     """The certificate's public-key pin when FleetWright serves HTTPS itself, else ''."""
     info = tls.current() if config.TLS_ON else None
     return info.spki_pin if info else ""
+
+
+async def record_pin(host_id: int, pin: str) -> None:
+    """Record a pin we know this agent accepted. A late acknowledgement of an old
+    certificate must not overwrite a newer one, so only the current pin counts."""
+    if not pin or pin != server_pin():
+        return
+    await db.execute("UPDATE hosts SET agent_tls_pin = %s WHERE id = %s", pin, host_id)
 
 
 def install_command(token: str) -> str:
@@ -210,11 +221,16 @@ async def server_pem():
 
 
 async def push_trust(pem: str) -> int:
-    """Send a certificate to every connected agent to add to its trust store."""
+    """Send a certificate and its pin to every connected agent to add to its trust store.
+    The pin is recorded only when the agent acknowledges it (or reconnects with it)."""
     sent = 0
+    pin = server_pin()
     for conn in list(connected.values()):
         try:
-            await conn.send({"type": "trust", "pem": pem})
+            msg = {"type": "trust", "pem": pem}
+            if pin:
+                msg["pin"] = pin
+            await conn.send(msg)
             sent += 1
         except Exception:  # noqa: BLE001
             pass
@@ -243,6 +259,10 @@ async def agent_ws(ws: WebSocket):
         except Exception:  # noqa: BLE001
             pass
     await db.execute("UPDATE hosts SET agent_connected = TRUE, last_seen = NOW() WHERE id = %s", hid)
+    if config.TLS_ON:
+        # The TLS handshake just succeeded with the certificate served now: whether the
+        # agent trusted it by enrolment or by an earlier trust message, it can reach us.
+        await record_pin(hid, server_pin())
     await conn.send({"type": "welcome", "host_id": hid, "scan_interval_min": config.SCAN_INTERVAL_MIN})
     if config.TLS_ON:
         await conn.send({"type": "trust", "pem": tls.leaf_pem()})
@@ -312,6 +332,9 @@ async def handle(conn: AgentConn, msg: dict) -> None:
         task = await _own_task(hid, msg.get("task_id"))
         if task:
             await task_result(conn, task, msg.get("result") or {})
+    elif kind == "trust_ack":
+        # The agent stored the certificate we sent; it can reconnect with that pin.
+        await record_pin(hid, str(msg.get("pin") or ""))
     elif kind == "pong":
         await db.execute("UPDATE hosts SET last_seen = NOW() WHERE id = %s", hid)
 
