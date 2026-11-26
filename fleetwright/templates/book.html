@@ -56,7 +56,7 @@
       <div class="field"><label for="window_end">Window closes (UTC)</label><input class="input mono" id="window_end" name="window_end" type="datetime-local" value="{{ form.window_end }}" required></div>
     </div>
     <div class="field"><label for="on_window_close">If the window closes mid-run</label>
-      <select id="on_window_close" name="on_window_close">{% for v, t in WINDOW_CLOSE.items() %}<option value="{{ v }}" {{ 'selected' if form.get('on_window_close') == v }}>{{ t }}</option>{% endfor %}</select></div>
+      <select id="on_window_close" name="on_window_close">{% for v, t in WINDOW_CLOSE_OPTIONS.items() %}<option value="{{ v }}" {{ 'selected' if form.get('on_window_close') == v }}>{{ t }}</option>{% endfor %}</select></div>
     <div class="form-grid">
       <div class="field"><label for="batch_size">Hosts at a time</label>
         <select id="batch_size" name="batch_size">{% for n, t in [(1, "1 (one by one)"), (2, "2"), (5, "5"), (10, "10"), (25, "25"), (0, "All at once")] %}<option value="{{ n }}" {{ 'selected' if form.get('batch_size')|string == n|string }}>{{ t }}</option>{% endfor %}</select></div>

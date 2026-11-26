@@ -180,4 +180,5 @@ def label(status: str) -> str:
 templates.env.filters.update(ago=ago, in_=in_, when=when, num=num, tone=tone, label=label)
 templates.env.globals.update(can=can, qs=qs, ROLES=ROLES, KIND_LABELS=fleet.KIND_LABELS,
                              REBOOT_CHOICES=fleet.REBOOT_CHOICES, WINDOW_CLOSE=fleet.WINDOW_CLOSE,
+                             WINDOW_CLOSE_OPTIONS=fleet.WINDOW_CLOSE_OPTIONS,
                              describe_selection=fleet.describe_selection, key_problem=security.key_problem)
