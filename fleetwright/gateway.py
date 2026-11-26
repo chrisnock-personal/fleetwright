@@ -23,12 +23,13 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import psycopg
 from psycopg import sql
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, Response
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from . import config, db, fleet, security, tls
 from .worker import apply_detail, record_apply, scan_detail, wants_reboot
@@ -110,11 +111,45 @@ def same_machine(facts: dict, hostname: str, candidates: list[dict]) -> Optional
             return c
     return None
 
+
+class EnrollFacts(BaseModel):
+    """Facts an agent reports about itself. Newer agents may add fields, but the ones
+    the server uses must have the right shape: a string where a string is expected."""
+    model_config = ConfigDict(extra="allow")
+    hostname: Optional[str] = None
+    address: Optional[str] = None
+    machine_id: Optional[str] = None
+    boot_id: Optional[str] = None
+    os_id: Optional[str] = None
+    os_version: Optional[str] = None
+    os_pretty: Optional[str] = None
+    family: Optional[str] = None
+    kernel: Optional[str] = None
+    booted_at: Optional[int] = None
+    pkgops: Optional[str] = None
+
+
+class EnrollIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = ""
+    facts: EnrollFacts
+
+
+def checked_enroll(body: Any) -> EnrollIn:
+    """Validate the whole request before the token is spent. Otherwise a malformed
+    facts value raises an AttributeError after the UPDATE has already committed, and
+    a legitimate agent retrying with the single-use token gets a 403."""
+    try:
+        return EnrollIn.model_validate(body)
+    except ValidationError as e:
+        raise HTTPException(400, "Bad request") from e
+
+
 @router.post("/api/agent/enroll")
 async def enroll(request: Request):
-    body = await request.json()
-    token = str(body.get("token", ""))
-    facts = body.get("facts") or {}
+    body = checked_enroll(await request.json())
+    token = body.token
+    facts = body.facts.model_dump(exclude_none=True)
     row = await db.fetchone(
         """UPDATE enroll_tokens SET uses_left = CASE WHEN uses_left IS NULL THEN NULL ELSE uses_left - 1 END
             WHERE token_hash = %s AND expires_at > NOW() AND (uses_left IS NULL OR uses_left > 0)
