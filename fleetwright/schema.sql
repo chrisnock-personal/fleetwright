@@ -80,6 +80,9 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;
 -- OS-level package holds reported by the last scan (apt-mark showhold / dnf versionlock list).
 -- Unlike hosts.held, these are set outside FleetWright; an empty array means none were reported.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS os_holds TEXT[] NOT NULL DEFAULT '{}';
+--- Upgrades Ubuntu is holding back from `apt upgrade` because of phased rollout,
+--- from the last scan. Empty on other hosts; an older agent omits the field.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS phased_updates TEXT[] NOT NULL DEFAULT '{}';
 -- The agent's files as one id (agents from 0.3.0 report it); compared with the server's
 -- to tell an outdated agent. NULL: an older agent, which can't update itself.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_bundle TEXT;

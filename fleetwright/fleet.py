@@ -360,6 +360,9 @@ async def record_scan(host_id: int, result: dict) -> None:
         if "os_holds" in result:
             await conn.execute("UPDATE hosts SET os_holds = %s WHERE id = %s",
                                (list(result["os_holds"] or []), host_id))
+        if "phased_updates" in result:
+            await conn.execute("UPDATE hosts SET phased_updates = %s WHERE id = %s",
+                               (list(result["phased_updates"] or []), host_id))
     if new_critical:
         name = await db.fetchval("SELECT name FROM hosts WHERE id = %s", host_id)
         advisories = sorted({a or n for n, a in new_critical})

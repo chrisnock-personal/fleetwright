@@ -58,7 +58,10 @@ otherwise.
   scan, choose, install, check for a reboot, reboot. The agent imports it;
   for SSH hosts the worker pipes the same file to `sudo -n python3 -`. Ubuntu:
   `apt-get -s upgrade --with-new-pkgs`, security from the `-security` pocket.
-  Fedora: `dnf check-upgrade` plus `dnf advisory list --json` for type and
+  Ubuntu's phased updates are found by repeating the simulation with
+  `APT::Get::Always-Include-Phased-Updates=true`; they stay out of the pending
+  counts and are listed separately on the host page. Fedora:
+  `dnf check-upgrade` plus `dnf advisory list --json` for type and
   severity, `dnf needs-restarting -r`.
 - **Runs and tasks**: a run is split into one task per host, in batches (an
   optional canary host first). The worker opens the next batch when the
