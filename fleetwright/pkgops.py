@@ -53,6 +53,10 @@ APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "a",
            "APT_LISTCHANGES_FRONTEND": "none"}
 APT_OPTS = ["-o", "DPkg::Lock::Timeout=600", "-o", "Dpkg::Options::=--force-confdef",
             "-o", "Dpkg::Options::=--force-confold"]
+# Ubuntu hides phased updates from `apt-get upgrade`. A second simulation that
+# includes them says exactly what is being withheld; apt elsewhere ignores the
+# option, so the two simulations match and nothing is reported.
+APT_PHASED_OPT = ["-o", "APT::Get::Always-Include-Phased-Updates=true"]
 
 
 class OpError(Exception):
@@ -193,6 +197,17 @@ def parse_apt_simulation(text: str) -> list[dict]:
     return pending
 
 
+def phased_updates_from_simulations(normal: str, with_phased: str) -> list[str]:
+    """Upgrades apt only plans when phasing is ignored, sorted by package name.
+
+    New packages in the second simulation are dependencies of those upgrades,
+    not phased updates themselves.
+    """
+    normal_names = {p["name"] for p in parse_apt_simulation(normal)}
+    return sorted({p["name"] for p in parse_apt_simulation(with_phased)
+                   if p["current"] is not None and p["name"] not in normal_names})
+
+
 def apt_installed() -> dict[str, str]:
     _, out = run(["dpkg-query", "-W", "-f", "${Package}:${Architecture} ${Version} ${db:Status-Abbrev}\n"],
                  quiet=True)
@@ -204,12 +219,25 @@ def apt_installed() -> dict[str, str]:
     return found
 
 
-def apt_scan(log, refresh: bool) -> list[dict]:
+def _apt_simulate_upgrade(log, extra_opts=()) -> str:
+    _, out = run(["apt-get", "-s", "upgrade", "--with-new-pkgs"] + APT_OPTS[:2] + list(extra_opts),
+                 log, env=APT_ENV, quiet=True)
+    return out
+
+
+def apt_scan(log, refresh: bool) -> tuple[list[dict], list[str]]:
+    """Return (pending, phased updates Ubuntu is currently holding back)."""
     if refresh:
         run(["apt-get", "update", "-q"] + APT_OPTS[:2], log, env=APT_ENV)
-    _, out = run(["apt-get", "-s", "upgrade", "--with-new-pkgs"] + APT_OPTS[:2], log,
-                 env=APT_ENV, quiet=True)
-    return parse_apt_simulation(out)
+    out = _apt_simulate_upgrade(log)
+    pending = parse_apt_simulation(out)
+    try:
+        all_out = _apt_simulate_upgrade(log, APT_PHASED_OPT)
+    except (OpError, OSError) as e:
+        if log:
+            log("phased-update check unavailable: " + str(e).splitlines()[0])
+        return pending, []
+    return pending, phased_updates_from_simulations(out, all_out)
 
 
 def apt_reboot_required() -> bool:
@@ -526,18 +554,23 @@ def _summary(pending: list[dict]) -> dict:
 def op_scan(log=_print_log, refresh: bool = True) -> dict:
     fam = family()
     log(f"▸ scan ({fam})")
-    pending = apt_scan(log, refresh) if fam == "apt" else dnf_scan(log, refresh)
+    if fam == "apt":
+        pending, phased = apt_scan(log, refresh)
+    else:
+        pending, phased = dnf_scan(log, refresh), []
     reboot = apt_reboot_required() if fam == "apt" else dnf_reboot_required()
     holds = apt_holds() if fam == "apt" else dnf_holds()
     s = _summary(pending)
     log(f"{s['pending_count']} updates pending, {s['security_count']} security"
         + (" · reboot required" if reboot else ""))
+    if phased:
+        log(f"{len(phased)} held back by Ubuntu phasing")
     autos = auto_updates(fam)
     for a in autos:
         if a["installs"]:
             log(f"note: {a['tool']} {a['detail']}, outside FleetWright")
     return {"ok": True, "facts": facts(), "pending": pending, "reboot_required": reboot,
-            "os_holds": holds, "auto_updates": autos, **s}
+            "os_holds": holds, "phased_updates": phased, "auto_updates": autos, **s}
 
 
 def op_apply(selection: dict, log=_print_log) -> dict:
