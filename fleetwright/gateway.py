@@ -40,7 +40,9 @@ router = APIRouter()
 AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
 AGENT_FILES = {"fleetwright_agent.py": AGENT_DIR / "fleetwright_agent.py",
                "pkgops.py": Path(__file__).parent / "pkgops.py",
-               "fleetwright-agent.service": AGENT_DIR / "fleetwright-agent.service"}
+               "fleetwright-agent.service": AGENT_DIR / "fleetwright-agent.service",
+               # Served to install.sh, never offered as an agent_update file.
+               "fleetwright-agent-wrapper.sh": AGENT_DIR / "fleetwright-agent-wrapper.sh"}
 NAME_OK = re.compile(r"[^A-Za-z0-9._-]+")
 BUNDLE_FILES = ("fleetwright_agent.py", "pkgops.py")
 RESTARTING = "restarting agent"   # a running agent_update task waiting for the new agent to say hello
@@ -488,7 +490,9 @@ async def finish_agent_updates(host_id: int, version: str, bundle: Optional[str]
                             host_id, RESTARTING):
         want = (t["result"] or {}).get("bundle")
         ok = bool(bundle) and bundle == want
-        text = f"Updated to {version}" if ok else f"The agent came back as {version or '?'}, not the new version"
+        # A different bundle on the same host means the wrapper restored the
+        # previous files: that's the rollback the update was watching for.
+        text = f"Updated to {version}" if ok else f"The agent rolled back to {version or 'an older version'}"
         await fleet.append_log(t["id"], _stamp(("✓ " if ok else "✗ ") + text))
         await fleet.finish_task(t["id"], ok, text)
 

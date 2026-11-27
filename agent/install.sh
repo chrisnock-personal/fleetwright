@@ -48,8 +48,13 @@ for f in fleetwright_agent.py pkgops.py; do
     fetch "$SERVER/agent/files/$f" -o "$DIR/$f.new"
     mv "$DIR/$f.new" "$DIR/$f"
 done
+# The wrapper is outside the self-update bundle: it is the thing that can undo
+# a bad bundle, so only the installer (or an admin) may replace it.
+fetch "$SERVER/agent/files/fleetwright-agent-wrapper.sh" -o "$DIR/fleetwright-agent-wrapper.sh.new"
+mv "$DIR/fleetwright-agent-wrapper.sh.new" "$DIR/fleetwright-agent-wrapper.sh"
 chmod 755 "$DIR"
 chmod 644 "$DIR"/*.py
+chmod 755 "$DIR/fleetwright-agent-wrapper.sh"
 fetch "$SERVER/agent/files/fleetwright-agent.service" -o /etc/systemd/system/fleetwright-agent.service
 
 set -- enroll "$SERVER" "$TOKEN"
