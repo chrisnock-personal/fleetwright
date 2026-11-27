@@ -12,7 +12,7 @@ from ..actions import admin
 from ..actions import runs as run_actions
 from ..actions import tokens as token_actions
 from ..actions.core import ActionError
-from ..webcommon import as_list, attempt, flash, form_data, may, redirect, render, split_words, who
+from ..webcommon import as_list, attempt, flash, form_data, redirect, render, require_action, split_words, who
 
 router = APIRouter()
 
@@ -23,7 +23,7 @@ def _id(v) -> int | None:
 
 @router.get("/settings")
 async def settings_home(request: Request):
-    may(request, "keys.list")
+    require_action(request, "keys.list")
     return redirect("/settings/keys")
 
 
@@ -68,7 +68,7 @@ async def key_delete(request: Request, kid: int):
 
 @router.get("/settings/groups", response_class=HTMLResponse)
 async def groups_page(request: Request):
-    may(request, "groups.save")
+    require_action(request, "groups.save")
     groups = (await admin.list_groups(who(request)))["groups"]
     return render(request, "settings_groups.html", groups=groups, section="groups")
 

@@ -19,7 +19,7 @@ def test_pages_never_check_roles_themselves():
     for path in [*(ROOT / "views").glob("*.py"), ROOT / "web.py"]:
         src = path.read_text()
         assert "require(" not in src, f"{path.name} checks a role itself; call an action instead"
-        assert not re.search(r"\.can\(", src), f"{path.name} checks a role itself; use may() or an action"
+        assert not re.search(r"\.can\(", src), f"{path.name} checks a role itself; use require_action() or an action"
 
 
 def test_every_action_has_an_api_route():

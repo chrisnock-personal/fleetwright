@@ -9,10 +9,10 @@
       <h1>Schedules</h1>
       <p>{{ on_count }} of {{ policies|length }} auto-install polic{{ 'y' if policies|length == 1 else 'ies' }} on · {{ booked }} one-off install{{ '' if booked == 1 else 's' }} booked · times in UTC</p>
     </div>
-    {% if can(current_user, 'operator') %}
+    {% if may('policies.save') or may('bookings.create') %}
     <div class="actions-row">
-      <a class="btn" href="/schedules/policies/new">New policy</a>
-      <a class="btn primary" href="/schedules/book">Schedule an install</a>
+      {% if may('policies.save') %}<a class="btn" href="/schedules/policies/new">New policy</a>{% endif %}
+      {% if may('bookings.create') %}<a class="btn primary" href="/schedules/book">Schedule an install</a>{% endif %}
     </div>
     {% endif %}
   </div>
@@ -44,7 +44,7 @@
       {% for p in policies %}
         <tr class="{{ '' if p.enabled else 'off' }}">
           <td style="width:76px">
-            {% if can(current_user, 'operator') %}
+            {% if may('policies.set_enabled') %}
             <form method="post" action="/schedules/policies/{{ p.id }}/action" class="inline-form">
               {{ csrf_field() }}<input type="hidden" name="action" value="toggle">
               <button type="submit" class="switch" aria-pressed="{{ 'true' if p.enabled else 'false' }}" aria-label="{{ p.name }} {{ 'on' if p.enabled else 'off' }}; switch {{ 'off' if p.enabled else 'on' }}"></button>
@@ -83,10 +83,10 @@
           <td class="nowrap">{% if b.run_id %}<a href="/runs/{{ b.run_id }}" style="text-decoration:none">{% endif %}<span class="badge {{ b.status|tone }}">{{ b.status|label }}</span>{% if b.run_id %}</a>{% endif %}</td>
           <td class="nowrap">
             <div class="row-actions">
-            {% if b.status == 'needs_approval' and can(current_user, 'admin') %}
+            {% if b.status == 'needs_approval' and may('bookings.approve') %}
               <form method="post" action="/schedules/bookings/{{ b.id }}/action">{{ csrf_field() }}<button class="btn small primary" name="action" value="approve">Approve</button></form>
             {% endif %}
-            {% if b.status in ('booked', 'needs_approval') and can(current_user, 'operator') %}
+            {% if b.status in ('booked', 'needs_approval') and may('bookings.cancel') %}
               <form method="post" action="/schedules/bookings/{{ b.id }}/action">{{ csrf_field() }}<button class="btn small" name="action" value="cancel">Cancel</button></form>
             {% endif %}
             </div>
