@@ -153,12 +153,23 @@ agents* button. An update is a normal run: one host first, then a tenth of
 them at a time, stopping at the first failure. Each agent fetches its two
 files over its own verified HTTPS connection, checks each against the SHA-256
 the server sent over the WebSocket, refuses any other file name and an agent
-that doesn't compile, swaps them in and exits for systemd to start the new
-one. The task finishes when the agent reconnects as the new version, and fails
-if it hasn't within `FLEETWRIGHT_REBOOT_WAIT`; there is no automatic rollback,
-so a host whose new agent won't start needs the install command run again.
-Agents older than 0.3.0 can't update themselves: run the install command on
-them once.
+that doesn't compile, saves the current files as `*.prev`, swaps them in and
+exits for the wrapper to start the new one. The wrapper is a small shell
+script installed outside the updatable bundle, and systemd starts it instead
+of Python directly. It empties `/run/fleetwright-agent/connected` on each
+start; the agent writes to it after its WebSocket session is really up. If
+that hasn't happened within 300 seconds (or the agent exits repeatedly), the
+wrapper restores the `*.prev` files and restarts the old agent. The server
+then sees the old version say hello and fails the task with *rolled back*, so
+the canary/failure limit still protects the rest of the fleet. The timeout
+can be changed with a `FLEETWRIGHT_AGENT_CONNECT_TIMEOUT` systemd drop-in.
+The task also fails if no agent connects within `FLEETWRIGHT_REBOOT_WAIT`.
+
+The wrapper and service file are not part of a self-update, so an agent
+installed before this change needs the install command from **Settings →
+Agents** run on it once (a reinstall also fetches the new service file).
+Agents older than 0.3.0 can't update themselves at all: run the install
+command on them once.
 
 ## API
 

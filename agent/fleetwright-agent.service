@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/fleetwright-agent/fleetwright_agent.py run
+ExecStart=/opt/fleetwright-agent/fleetwright-agent-wrapper.sh
 Restart=always
 RestartSec=10
 # It installs packages, so it runs as root; keep the rest of the system out of reach.

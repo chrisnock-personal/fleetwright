@@ -8,7 +8,8 @@ its own timer and runs the operations the server sends. It runs only
 pkgops operations (scan, apply, reboot, auto_off), never arbitrary commands,
 and can replace its own two files with the server's (agent_update): each is
 fetched over the same verified HTTPS and must match the SHA-256 the server
-sent over the WebSocket.
+sent over the WebSocket. The old files are kept as .prev for the wrapper to
+restore if this version never connects.
 
     fleetwright_agent.py enroll <server url> <enrolment token> [--ca server.pem] [--insecure]
     fleetwright_agent.py run
@@ -38,8 +39,16 @@ import pkgops  # noqa: E402
 AGENT_VERSION = "0.3.1"
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # The files a self-update may replace; the server can't name any other path.
+# The '.prev' copies and the wrapper are deliberately not in this set: they're
+# the rollback path, not the version the server checks.
 BUNDLE_FILES = ("fleetwright_agent.py", "pkgops.py")
 CONFIG_PATH = os.environ.get("FLEETWRIGHT_AGENT_CONFIG", "/etc/fleetwright-agent/agent.json")
+# /run rather than /tmp: the service has PrivateTmp=true, and the wrapper must
+# see the marker this process writes on a different side of that boundary.
+CONNECTED_MARKER = (os.environ.get("FLEETWRIGHT_AGENT_CONNECTED_MARKER")
+                    or os.environ.get("FLEETWRIGHT_AGENT_MARKER")
+                    or os.environ.get("AGENT_CONNECTED_MARKER")
+                    or "/run/fleetwright-agent/connected")
 log = logging.getLogger("fleetwright-agent")
 
 
@@ -124,9 +133,48 @@ def own_bundle() -> str:
     return bundle_id(hashes)
 
 
+def atomic_write(path: str, data: bytes, mode: int = 0o644) -> None:
+    """Replace path with data via a file in the same directory: no reader ever
+    sees a half-written file, including the wrapper restoring a rolled-back agent."""
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def mark_connected(path: str | None = None) -> None:
+    """Tell the wrapper this agent got all the way to a connected session.
+
+    A marker left over from a previous start would be wrong, so the wrapper
+    empties it before each attempt. Failing to write it must not break the
+    connection: rollback is best-effort too.
+    """
+    target = (path or os.environ.get("FLEETWRIGHT_AGENT_CONNECTED_MARKER")
+              or os.environ.get("FLEETWRIGHT_AGENT_MARKER")
+              or os.environ.get("AGENT_CONNECTED_MARKER") or CONNECTED_MARKER)
+    try:
+        os.makedirs(os.path.dirname(target) or ".", mode=0o755, exist_ok=True)
+        atomic_write(target, f"{time.time():.0f}\n".encode(), 0o644)
+    except OSError as e:
+        log.warning("couldn't write the connected marker %s: %s", target, e)
+
+
+# Older/newer callers may use either name; both refer to the same helper.
+touch_connected_marker = mark_connected
+
+
 def self_update(cfg: dict, want: dict, log) -> dict:
-    """Fetch the server's agent files, check each against its SHA-256, then swap them
-    in together. The caller exits afterwards and systemd starts the new agent."""
+    """Fetch the server's agent files, check each against its SHA-256, keep the
+    current files as '.prev', then swap them in together. The caller exits
+    afterwards, and the wrapper starts and watches the new agent."""
     files = want.get("files") or {}
     if set(files) != set(BUNDLE_FILES) or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in files.values()):
         raise pkgops.OpError("the server sent an unexpected file list")
@@ -151,6 +199,12 @@ def self_update(cfg: dict, want: dict, log) -> dict:
             staged.append((tmp, os.path.join(AGENT_DIR, name)))
         with open(staged[0][0]) as f:
             compile(f.read(), "fleetwright_agent.py", "exec")  # refuse an agent that can't even start
+        # Only now, with every hash checked and the new agent compilable, keep
+        # a way back. All copies are written before any final file is replaced,
+        # so the wrapper can never find a half-saved backup.
+        for _, final in staged:
+            with open(final, "rb") as f:
+                atomic_write(final + ".prev", f.read())
         for tmp, final in staged:
             os.replace(tmp, final)
     finally:
@@ -304,6 +358,9 @@ class Agent:
         log.info("connected to %s", self.cfg["server"])
         await self.send({"type": "hello", "version": AGENT_VERSION, "bundle": own_bundle(),
                          "facts": host_facts(self.cfg["server"])})
+        # Only a successful session counts: a failed first dial leaves the
+        # wrapper waiting, so it can restore the files if this agent won't start.
+        mark_connected()
         pending: set = set()
         try:
             async for raw in self.ws:
