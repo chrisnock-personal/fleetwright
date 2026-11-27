@@ -229,13 +229,57 @@ Running Python as root is as good as root, so treat that key like a root key.
   session cookie, so other sites can't use a signed-in browser.
 - Not yet: the Postgres connection inside the compose network is
   unencrypted, and the database volume isn't encrypted at rest (backups are,
-  with age).
+  with age). A database on another host can use verified TLS through
+  `FLEETWRIGHT_DB_SSLMODE` and `FLEETWRIGHT_DB_SSLROOTCERT` (below).
 
 ## Configuration
 
 See `.env.example`. The worker also takes `FLEETWRIGHT_SSH_CONCURRENCY` (50),
 `FLEETWRIGHT_SCAN_INTERVAL_MIN` (360), `FLEETWRIGHT_TASK_TIMEOUT` (3600 s) and
 `FLEETWRIGHT_REBOOT_WAIT` (600 s).
+
+### Remote Postgres over TLS
+
+The bundled `db` service is on the private compose network. If Postgres is on
+another host, set its address in `.env` (the compose files set
+`POSTGRES_HOST=db` for the app, so use `DATABASE_URL`) and require a verified
+TLS connection:
+
+```ini
+DATABASE_URL=postgresql://fleetwright:change-me@db.example.com:5432/fleetwright
+FLEETWRIGHT_DB_SSLMODE=verify-full
+FLEETWRIGHT_DB_SSLROOTCERT=/etc/fleetwright/db-ca.pem
+```
+
+`FLEETWRIGHT_DB_SSLMODE` accepts libpq's `disable`, `allow`, `prefer`,
+`require`, `verify-ca` and `verify-full`; only the last two check the CA, and
+only `verify-full` checks the server name in the certificate. Both settings
+are optional: with neither set, the URL is left as written, so local installs
+are unchanged. A `DATABASE_URL` you supply takes precedence over `POSTGRES_*`;
+the TLS settings are appended to it, overriding `sslmode`/`sslrootcert`
+already in its query string. The web pool and both LISTEN connections (gateway
+and worker) all use that one URL.
+
+Mount the CA at the path given to `FLEETWRIGHT_DB_SSLROOTCERT` in every
+container that connects. Put `db-ca.pem` next to `docker-compose.yml` and add
+`docker-compose.override.yml` (compose picks it up automatically; with
+podman-compose, pass `-f docker-compose.yml -f docker-compose.override.yml`):
+
+```yaml
+services:
+  web:
+    volumes:
+      - ./db-ca.pem:/etc/fleetwright/db-ca.pem:ro,z
+  worker:
+    volumes:
+      - ./db-ca.pem:/etc/fleetwright/db-ca.pem:ro,z
+```
+
+`:z` is for SELinux with podman; omit it with Docker. Restart with
+`docker compose up -d`. The bundled `db` service and its volume are then
+unused and can be left running. The optional `backup` service uses `pg_dump`
+with its own `PG*` variables, so a remote database needs separate backup
+configuration.
 
 ## Development
 
