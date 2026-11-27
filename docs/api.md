@@ -66,7 +66,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
   instead. They're pinned to the versions pending now, as on a host's page.
 - **Idempotency-Key**: send the same key again (a retry after a timeout, say)
   and you get the first answer back, with `Idempotent-Replayed: true`, instead
-  of a second run. Keys last a day. They work on `POST /runs`,
+  of a second run. The key is claimed atomically in the database, so two requests
+  sent at the same time also start just one run: the second waits briefly and
+  replays the first one's answer. Keys last a day. They work on `POST /runs`,
   `/runs/{id}/retry`, `/policies/{id}/run` and `/agents/update`.
 
 Follow a run as it happens with Server-Sent Events:

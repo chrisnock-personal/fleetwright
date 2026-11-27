@@ -298,3 +298,9 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (token_id, key)
 );
+-- The row is inserted before start() runs, so a concurrent request with the same key
+-- can't start a second run (INSERT ... ON CONFLICT claims the key atomically). While
+-- start() is running response is NULL and claim identifies its request; a failed start
+-- deletes only its own claim, and a finished response is never overwritten.
+ALTER TABLE api_idempotency ALTER COLUMN response DROP NOT NULL;
+ALTER TABLE api_idempotency ADD COLUMN IF NOT EXISTS claim TEXT;
