@@ -25,8 +25,11 @@ KIND_LABELS = {"security": "Security", "kernel": "Kernel", "bugfix": "Bug fixes"
 SEVERITIES = ["critical", "important", "moderate", "low"]
 REBOOT_CHOICES = {"never": "Never", "if_needed": "If needed", "always": "Always"}
 WINDOW_CLOSE = {"finish_started": "Finish hosts already started, start no new ones",
-                "stop": "Stop at once (running hosts finish their current step)",
+                "stop": "Finish hosts already started, start no new ones (legacy alias)",
                 "carry_on": "Carry on until done"}
+# 'stop' stays accepted for stored bookings, the API and the CLI, but isn't offered in the
+# UI: stopping a host mid-install isn't safe, so it has always done the same as finish_started.
+WINDOW_CLOSE_OPTIONS = {k: v for k, v in WINDOW_CLOSE.items() if k != "stop"}
 TASK_CHANNEL = "fw_tasks"
 # A host where unattended-upgrades or dnf-automatic installs updates by itself.
 AUTO_UPDATING_SQL = "jsonb_path_exists(COALESCE(h.auto_updates, '[]'), '$[*] ? (@.installs == true)')"

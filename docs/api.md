@@ -148,6 +148,9 @@ Generated from the code: each endpoint, the lowest role allowed, and what it doe
 | `POST /bookings/{booking_id}/approve` | Admin | Approve a booked install that needs an admin's approval. |
 | `POST /bookings/{booking_id}/cancel` | Operator | Cancel a booked install that hasn't started. |
 
+`on_window_close` is `finish_started` (the default: hosts already running finish, no new host starts), `carry_on`,
+or the legacy alias `stop`, which behaves exactly like `finish_started` — stopping an install in progress isn't safe.
+
 ### Overview and audit
 
 | Endpoint | Role | What it does |
