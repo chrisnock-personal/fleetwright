@@ -134,6 +134,7 @@
           <div>Held (never installed)<b class="mono">{{ h.held|join(', ') or '—' }}</b></div>
           <div>Auto-install policies<b>{% for p in policies %}<a href="/schedules/policies/{{ p.id }}">{{ p.name }}</a>{{ '' if p.enabled else ' (off)' }}{{ ', ' if not loop.last }}{% else %}none{% endfor %}</b></div>
           {% if h.mode == 'ssh' %}<div>Pinned host key<b class="mono">{{ (h.ssh_host_key or 'not yet')[:40] }}{{ '…' if h.ssh_host_key }}</b></div>{% endif %}
+          {% if h.mode == 'ssh' and h.ssh_known_hosts %}<div>Recorded host keys<b class="mono">{{ h.ssh_known_hosts|length }} pasted</b></div>{% endif %}
           <div>Added<b>{{ h.created_at|when }}</b></div>
         </div>
         {% if may('hosts.edit') %}
@@ -154,8 +155,8 @@
           </form>
           {% if may('hosts.forget_key') or may('hosts.delete') %}
           <div class="actions-row" style="margin-top:12px">
-            {% if may('hosts.forget_key') and h.mode == 'ssh' and h.ssh_host_key %}
-            <form method="post" action="/hosts/{{ h.id }}/forget-key" class="inline-form">{{ csrf_field() }}<button class="btn small" type="submit">Forget pinned host key</button></form>
+            {% if may('hosts.forget_key') and h.mode == 'ssh' and (h.ssh_host_key or h.ssh_known_hosts) %}
+            <form method="post" action="/hosts/{{ h.id }}/forget-key" class="inline-form">{{ csrf_field() }}<button class="btn small" type="submit">Forget host keys</button></form>
             {% endif %}
             {% if may('hosts.delete') %}
             <form method="post" action="/hosts/{{ h.id }}/delete" class="inline-form" data-confirm="Remove {{ h.name }} and its history?">{{ csrf_field() }}<button class="btn small danger" type="submit">Remove host</button></form>
@@ -165,6 +166,19 @@
         </details>
         {% endif %}
       </section>
+
+      {% if h.mode == 'ssh' and may('hosts.edit') %}
+      <section class="card panel">
+        <div class="panel-head"><h2>Known host keys</h2><span class="hint">ssh-keyscan</span></div>
+        <form class="pad" method="post" action="/hosts/{{ h.id }}/known-hosts" style="display:flex;flex-direction:column;gap:10px">
+          {{ csrf_field() }}
+          <textarea class="input" name="known_hosts" rows="4" placeholder="10.0.0.11 ssh-ed25519 AAAA…">{% for k in h.ssh_known_hosts or [] %}{{ h.address }} {{ k }}
+{% endfor %}</textarea>
+          <span class="help">Paste <code class="mono">ssh-keyscan {{ h.address }}</code> output to check the host's keys on every connection. Leave empty to clear them and go back to pinning the first key offered.</span>
+          <button type="submit" class="btn small">Save host keys</button>
+        </form>
+      </section>
+      {% endif %}
 
       <section class="card panel">
         <div class="panel-head"><h2>OS-level holds</h2><span class="hint">apt-mark / dnf versionlock</span></div>

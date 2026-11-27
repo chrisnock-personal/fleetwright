@@ -17,6 +17,11 @@
       <textarea class="input" id="hosts" name="hosts" rows="8" placeholder="web-01 10.0.0.11&#10;web-02 10.0.0.12:2222&#10;db-01.example.com" required>{{ form.get('hosts', '') }}</textarea>
       <span class="help"><code class="mono">name address[:port]</code>, or just an address (it becomes the name). Lines starting with # are ignored.</span>
     </div>
+    <div class="field">
+      <label for="known_hosts">Known host keys (optional)</label>
+      <textarea class="input" id="known_hosts" name="known_hosts" rows="3" placeholder="web-01 ssh-ed25519 AAAA…&#10;web-02 ssh-rsa AAAAB3…">{{ form.get('known_hosts', '') }}</textarea>
+      <span class="help">Paste <code class="mono">ssh-keyscan</code> output to check the host keys on the first and every later connection, instead of trusting whatever key is offered first. <code class="mono">ssh-ed25519</code> and <code class="mono">ssh-rsa</code> lines only; comments and blank lines are ignored.</span>
+    </div>
     <div class="form-grid">
       <div class="field">
         <label for="credential_id">SSH key</label>
@@ -36,7 +41,7 @@
         <input class="input" id="tags" name="tags" value="{{ form.get('tags', '') }}" placeholder="pci, eu-west">
       </div>
     </div>
-    <p class="hint">The first connection pins each host's SSH key; a different key later is refused. The SSH user needs passwordless <code class="mono">sudo</code> (see the README).</p>
+    <p class="hint">Without pasted keys, the first connection pins each host's SSH key; a different key later is refused. The SSH user needs passwordless <code class="mono">sudo</code> (see the README).</p>
     <div class="actions"><span></span><div class="end"><a class="btn" href="/hosts">Cancel</a><button class="btn primary" type="submit">Add and scan</button></div></div>
   </form>
 </main>

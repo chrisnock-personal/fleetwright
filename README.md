@@ -214,8 +214,10 @@ Running Python as root is as good as root, so treat that key like a root key.
   refuse plain `http://`/`ws://` unless enrolled with `--insecure`.
 - **SSH host keys are pinned** on first contact. After that only the pinned
   key is accepted in the handshake, so a host offering a different key is
-  refused before FleetWright authenticates or sends anything. *Forget pinned
-  host key* on the host page clears it after a deliberate rebuild.
+  refused before FleetWright authenticates or sends anything. To skip that
+  first-use trust, paste `ssh-keyscan` output when adding a host (or on its
+  page): every pasted `ssh-ed25519`/`ssh-rsa` key is then checked on every
+  connection. *Forget host keys* clears both kinds after a deliberate rebuild.
 - **Secrets**: SSH private keys and notification secrets are encrypted
   (Fernet, from `FLEETWRIGHT_SECRET_KEY`); agent tokens, enrolment tokens,
   API tokens and setup links are stored only as SHA-256 hashes; passwords use

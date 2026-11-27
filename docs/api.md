@@ -93,12 +93,12 @@ Generated from the code: each endpoint, the lowest role allowed, and what it doe
 | `GET /hosts/{host_id}` | Viewer | One host: what it is, its counts, the policies that apply to it and hosts sharing its machine id. |
 | `GET /hosts/{host_id}/updates` | Viewer | A host's pending updates (kind: all, security, kernel, held), most urgent first. |
 | `GET /hosts/{host_id}/history` | Viewer | What FleetWright did to a host: package version changes and its recent tasks. |
-| `POST /hosts` | Operator | Add agentless hosts ({name, address, port}) that FleetWright reaches over SSH with a stored key; each is scanned. |
-| `PATCH /hosts/{host_id}` | Operator | Change a host's name, group, tags, "never install" list, and (SSH hosts) address, port and key. |
+| `POST /hosts` | Operator | Add agentless hosts ({name, address, port}) that FleetWright reaches over SSH with a stored key; each is scanned. Optional `known_hosts`: pasted `ssh-keyscan` output, checked on every connection. |
+| `PATCH /hosts/{host_id}` | Operator | Change a host's name, group, tags, "never install" list, and (SSH hosts) address, port, key and `known_hosts` (empty string clears recorded host keys). |
 | `POST /hosts/tag` | Operator | Add tags to hosts. |
 | `POST /hosts/move` | Operator | Move hosts to a group (or out of any). |
 | `POST /hosts/scan` | Operator | Scan hosts for updates now (all hosts when none are given). |
-| `POST /hosts/{host_id}/forget-host-key` | Admin | Clear a host's pinned SSH host key; the next connection pins whatever key it offers. |
+| `POST /hosts/{host_id}/forget-host-key` | Admin | Clear a host's pinned and pasted SSH host keys; the next connection pins whatever key it offers. |
 | `DELETE /hosts/{host_id}` | Admin | Remove hosts and their history. Agents on them can no longer connect. |
 | `POST /hosts/delete` | Admin | Remove hosts and their history. Agents on them can no longer connect. |
 

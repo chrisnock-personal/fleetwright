@@ -4,12 +4,14 @@ sshrun.py
 Running pkgops on an agentless host: connect with the stored key, pipe
 pkgops.py to ``sudo -n python3 -``, stream its output back.
 
-Host keys: the first connection to a host pins the key it offers (trust on
-first use, like answering "yes" to ssh's prompt). Every later connection
-passes only that key to the SSH handshake, so a host offering a different key
-is refused during key exchange, before FleetWright authenticates or sends
-anything. "Forget pinned host key" on the host page clears it after a
-deliberate rebuild.
+Host keys: by default the first connection to a host pins the key it offers
+(trust on first use, like answering "yes" to ssh's prompt). Every later
+connection passes only that key to the SSH handshake, so a host offering a
+different key is refused during key exchange, before FleetWright authenticates
+or sends anything. An admin can instead paste ``ssh-keyscan`` output when
+adding a host: those keys are passed to asyncssh as the host's known keys and
+are checked on the very first connection too. "Forget host keys" on the host
+page clears both kinds after a deliberate rebuild.
 """
 
 from __future__ import annotations
@@ -47,15 +49,28 @@ async def _credential(host: dict) -> dict:
     return cred
 
 
+def _trusted_host_keys(host: dict) -> list[asyncssh.SSHKey]:
+    """Keys FleetWright will accept in the handshake. Pasted keys win over a key
+    pinned by first use, so supplying keys is never quietly undone by TOFU."""
+    supplied = host.get("ssh_known_hosts") or []
+    if isinstance(supplied, str):
+        supplied = [supplied]
+    data = supplied or ([host["ssh_host_key"]] if host.get("ssh_host_key") else [])
+    try:
+        return [asyncssh.import_public_key(key) for key in data]
+    except ValueError as e:
+        raise SSHFailure("This host has an unreadable recorded SSH host key; save its host keys again.") from e
+
+
 async def connect(host: dict) -> asyncssh.SSHClientConnection:
     cred = await _credential(host)
     try:
         key = asyncssh.import_private_key(security.decrypt(cred["private_key_enc"]))
     except security.UndecryptableSecret as e:
         raise SSHFailure(f"SSH key {cred['name']}: {e}") from e
-    pinned = host.get("ssh_host_key")
-    # (trusted host keys, trusted CA keys, revoked keys): only the pinned key is accepted.
-    known = ([asyncssh.import_public_key(pinned)], [], []) if pinned else None
+    # (trusted host keys, trusted CA keys, revoked keys): only these keys are accepted.
+    trusted = _trusted_host_keys(host)
+    known = (trusted, [], []) if trusted else None
     try:
         conn = await asyncio.wait_for(asyncssh.connect(
             host["address"], port=host["port"], username=cred["username"], client_keys=[key],
@@ -63,16 +78,22 @@ async def connect(host: dict) -> asyncssh.SSHClientConnection:
             connect_timeout=config.SSH_CONNECT_TIMEOUT, keepalive_interval=30),
             timeout=config.SSH_CONNECT_TIMEOUT + 5)
     except asyncssh.HostKeyNotVerifiable as e:
-        raise HostKeyMismatch(
-            "The host offered a different SSH host key from the one pinned when FleetWright first "
-            "connected, so nothing was sent. If the host was rebuilt, use “Forget pinned host key” "
-            "on its page; otherwise investigate.") from e
+        if host.get("ssh_known_hosts"):
+            why = ("The host offered an SSH host key that isn't one of the keys recorded for this host, "
+                   "so nothing was sent. Check the host keys against ssh-keyscan; if the host was rebuilt, "
+                   "save the new keys on its page.")
+        else:
+            why = ("The host offered a different SSH host key from the one pinned when FleetWright first "
+                   "connected, so nothing was sent. If the host was rebuilt, use “Forget host keys” "
+                   "on its page; otherwise investigate.")
+        raise HostKeyMismatch(why) from e
     except (OSError, asyncssh.Error, asyncio.TimeoutError) as e:
         # A connect timeout's message is empty: say what happened instead of printing nothing.
         why = str(e) or ("timed out" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else type(e).__name__)
         raise SSHFailure(f"Can't connect to {host['address']}:{host['port']}: {why}") from e
     seen = conn.get_server_host_key().export_public_key().decode().strip()
-    if not pinned:
+    if not trusted:
+        # No supplied or pinned key: keep the old first-use pinning behaviour.
         await db.execute("UPDATE hosts SET ssh_host_key = %s WHERE id = %s AND ssh_host_key IS NULL",
                          seen, host["id"])
     return conn
