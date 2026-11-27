@@ -77,9 +77,15 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS instance_id TEXT;
 -- Other tools that install updates (unattended-upgrades, dnf-automatic), from the last scan:
 -- [{"tool": .., "installs": bool, "detail": ..}]. NULL: not reported (an older agent).
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;
+-- OS-level package holds reported by the last scan (apt-mark showhold / dnf versionlock list).
+-- Unlike hosts.held, these are set outside FleetWright; an empty array means none were reported.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS os_holds TEXT[] NOT NULL DEFAULT '{}';
 -- The agent's files as one id (agents from 0.3.0 report it); compared with the server's
 -- to tell an outdated agent. NULL: an older agent, which can't update itself.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_bundle TEXT;
+-- The HTTPS public-key pin this agent last enrolled, connected or acknowledged with.
+-- NULL: not recorded (an older agent, or FleetWright isn't serving HTTPS itself).
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_tls_pin TEXT;
 -- The hostname the machine reports (the host's name in FleetWright can be changed);
 -- one of the ways a reinstall is told from a cloned machine.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS hostname TEXT;
@@ -303,3 +309,9 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (token_id, key)
 );
+-- The row is inserted before start() runs, so a concurrent request with the same key
+-- can't start a second run (INSERT ... ON CONFLICT claims the key atomically). While
+-- start() is running response is NULL and claim identifies its request; a failed start
+-- deletes only its own claim, and a finished response is never overwritten.
+ALTER TABLE api_idempotency ALTER COLUMN response DROP NOT NULL;
+ALTER TABLE api_idempotency ADD COLUMN IF NOT EXISTS claim TEXT;

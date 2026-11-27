@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Literal, Optional
 
@@ -115,26 +116,69 @@ def ok(data: Any, status: int = 200) -> JSONResponse:
     return JSONResponse(jsonable_encoder(data), status_code=status)
 
 
+# Inserting the row *before* start() is what makes the key safe against concurrent
+# requests: ON CONFLICT claims it once, in the database, with no in-process lock.
+# A claim older than a minute is stale (the process that held it died); a finished
+# response can only be reused after the usual day.
+_CLAIM_SQL = """INSERT INTO api_idempotency (token_id, key, endpoint, claim)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (token_id, key) DO UPDATE
+                   SET endpoint = EXCLUDED.endpoint, claim = EXCLUDED.claim, response = NULL,
+                       created_at = NOW()
+                   WHERE api_idempotency.created_at < NOW() - INTERVAL '1 day'
+                      OR (api_idempotency.response IS NULL
+                          AND api_idempotency.created_at < NOW() - INTERVAL '1 minute')
+                RETURNING endpoint, response, claim"""
+_REPLAY_SQL = ("SELECT endpoint, response FROM api_idempotency WHERE token_id = %s AND key = %s "
+               "AND created_at > NOW() - INTERVAL '1 day'")
+_WAIT_FOR_WINNER = 5.0       # seconds a duplicate waits for the claimant's answer
+_POLL_INTERVAL = 0.05
+
+
 async def idempotent(who: Principal, key: Optional[str], endpoint: str,
                      start: Callable[[], Awaitable[dict]]) -> JSONResponse:
     """With an Idempotency-Key, a repeat of the same request returns the first answer
-    instead of doing it again (for a day)."""
+    instead of doing it again (for a day).
+
+    The first request claims the key with an atomic INSERT before calling start();
+    others see the pending claim, wait briefly and replay its stored answer. Exactly
+    one of them calls start(), and a final response is never overwritten."""
     if not key:
         return ok(await start(), 201)
     if len(key) > 200:
         raise ActionError("invalid", "Idempotency-Key is at most 200 characters")
-    seen = await db.fetchone("SELECT endpoint, response FROM api_idempotency WHERE token_id = %s AND key = %s "
-                             "AND created_at > NOW() - INTERVAL '1 day'", who.token_id, key)
-    if seen:
-        if seen["endpoint"] != endpoint:
-            raise ActionError("conflict", "That Idempotency-Key was already used for a different request")
-        return JSONResponse(seen["response"], status_code=200, headers={"Idempotent-Replayed": "true"})
-    result = jsonable_encoder(await start())
-    await db.execute("""INSERT INTO api_idempotency (token_id, key, endpoint, response) VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (token_id, key) DO UPDATE SET endpoint = EXCLUDED.endpoint,
-                               response = EXCLUDED.response, created_at = NOW()""",
-                     who.token_id, key, endpoint, db.J(result))
-    return JSONResponse(result, status_code=201)
+    deadline = time.monotonic() + _WAIT_FOR_WINNER
+    while True:
+        claim = uuid.uuid4().hex
+        mine = await db.fetchone(_CLAIM_SQL, who.token_id, key, endpoint, claim)
+        if mine and mine["claim"] == claim:
+            try:
+                result = jsonable_encoder(await start())
+            except BaseException:
+                # Let a retry (or a request that was waiting on us) claim the key again.
+                await db.execute("""DELETE FROM api_idempotency
+                                    WHERE token_id = %s AND key = %s AND claim = %s AND response IS NULL""",
+                                 who.token_id, key, claim)
+                raise
+            # Only the pending claim may be answered: never overwrite a final response
+            # stored by a previous winner (e.g. if this start() outlived its claim).
+            stored = await db.execute("""UPDATE api_idempotency SET response = %s, claim = NULL
+                                         WHERE token_id = %s AND key = %s AND claim = %s
+                                           AND response IS NULL""",
+                                      db.J(result), who.token_id, key, claim)
+            if stored:
+                return JSONResponse(result, status_code=201)
+        seen = await db.fetchone(_REPLAY_SQL, who.token_id, key)
+        if seen:
+            if seen["endpoint"] != endpoint:
+                raise ActionError("conflict", "That Idempotency-Key was already used for a different request")
+            if seen["response"] is not None:
+                return JSONResponse(seen["response"], status_code=200,
+                                    headers={"Idempotent-Replayed": "true"})
+        if time.monotonic() >= deadline:
+            raise ActionError("conflict", "Another request with this Idempotency-Key is still running; "
+                                          "retry shortly")
+        await asyncio.sleep(_POLL_INTERVAL)
 
 
 IdemKey = Header(default=None, alias="Idempotency-Key",

@@ -43,6 +43,7 @@
     <div class="form-grid">
       <div class="field"><label for="tname">Name</label><input class="input" id="tname" name="name" placeholder="ci-pipeline" required></div>
       <div class="field"><label for="trole">Role</label><select id="trole" name="role">
+        {# A token's role is bounded by your own, not by any action: can() is for this choice. #}
         {% for r in ['viewer', 'operator', 'admin'] %}{% if can(current_user, r) %}<option value="{{ r }}" {{ 'selected' if r == current_user.role }}>{{ ROLES[r] }}</option>{% endif %}{% endfor %}
       </select><span class="help">At most your own.</span></div>
       <div class="field"><label for="texp">Expires after (days)</label><input class="input short" id="texp" name="expires_days" placeholder="never" inputmode="numeric"></div>

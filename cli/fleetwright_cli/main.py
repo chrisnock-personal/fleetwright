@@ -1004,7 +1004,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--needs-approval", action="store_true")
     p.add_argument("--reboot", default="if-needed", choices=["never", "if-needed", "always"])
     p.add_argument("--batch", type=int, default=1, help="hosts at a time")
-    p.add_argument("--on-close", default="finish-started", choices=["finish-started", "stop", "carry-on"])
+    p.add_argument("--on-close", default="finish-started", choices=["finish-started", "stop", "carry-on"],
+                   help="when the window closes: running hosts finish and no new ones start, or carry on"
+                        " until done; 'stop' is a legacy alias for 'finish-started'")
     p.add_argument("--title")
 
     bk = sub.add_parser("bookings", help="Booked installs", parents=[common])

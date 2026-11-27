@@ -11,9 +11,10 @@ from urllib.parse import urlencode
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from jinja2 import pass_context
 
 from . import fleet, security
-from .actions.core import ActionError, Principal
+from .actions.core import ACTIONS, ActionError, Principal
 
 ROLES = {"admin": "Admin", "operator": "Operator", "viewer": "Viewer"}
 RANK = {"viewer": 0, "operator": 1, "admin": 2}
@@ -63,13 +64,11 @@ def who(request: Request) -> Principal:
     return Principal(u["id"], u["name"], u["role"])
 
 
-def may(request: Request, action_name: str) -> None:
+def require_action(request: Request, action_name: str) -> None:
     """For a page that only shows an action's form: refuse it to people the action would refuse.
     The role comes from the action's own declaration."""
-    from .actions.core import ACTIONS
-    act = ACTIONS[action_name]
-    if not who(request).can(act.role):
-        raise ActionError("forbidden", f"This needs the {ROLES[act.role]} role.")
+    if not may(user(request), action_name):
+        raise ActionError("forbidden", f"This needs the {ROLES[ACTIONS[action_name].role]} role.")
 
 
 async def attempt(request: Request, coro, back: str):
@@ -86,6 +85,22 @@ async def attempt(request: Request, coro, back: str):
 
 def can(u: Optional[dict], role: str) -> bool:
     return bool(u) and RANK.get(u["role"], -1) >= RANK[role]
+
+
+def may(u: Optional[dict], action_name: str) -> bool:
+    """Whether this signed-in person may do an action: a thin lookup of the role the
+    action declared (#41). Templates use the one-argument global below; an unknown
+    action is a bug, so fail rather than quietly hiding a button for everybody."""
+    act = ACTIONS.get(action_name)
+    if act is None:
+        raise ValueError(f"unknown action {action_name!r}")
+    return can(u, act.role)
+
+
+@pass_context
+def _may(context, action_name: str) -> bool:
+    """Jinja global: may('hosts.scan'), with current_user taken from the template context."""
+    return may(context.get("current_user"), action_name)
 
 
 def flash(request: Request, message: str, tone: str = "ok") -> None:
@@ -178,6 +193,7 @@ def label(status: str) -> str:
 
 
 templates.env.filters.update(ago=ago, in_=in_, when=when, num=num, tone=tone, label=label)
-templates.env.globals.update(can=can, qs=qs, ROLES=ROLES, KIND_LABELS=fleet.KIND_LABELS,
+templates.env.globals.update(can=can, may=_may, qs=qs, ROLES=ROLES, KIND_LABELS=fleet.KIND_LABELS,
                              REBOOT_CHOICES=fleet.REBOOT_CHOICES, WINDOW_CLOSE=fleet.WINDOW_CLOSE,
+                             WINDOW_CLOSE_OPTIONS=fleet.WINDOW_CLOSE_OPTIONS,
                              describe_selection=fleet.describe_selection, key_problem=security.key_problem)

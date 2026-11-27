@@ -9,10 +9,10 @@
       <h1>Hosts</h1>
       <p>{{ counts.all|num }} host{{ "" if counts.all == 1 else "s" }}{% if f.q %} matching “{{ f.q }}”{% endif %} · {{ counts.updates|num }} with updates · {{ counts.security|num }} with security updates</p>
     </div>
-    {% if can(current_user, 'operator') %}
+    {% if may('hosts.add_ssh') or may('enroll.create') %}
     <div class="actions-row">
-      {% if can(current_user, 'admin') %}<a class="btn" href="/settings/agents">Enrol agents</a>{% endif %}
-      <a class="btn primary" href="/hosts/new">Add SSH hosts</a>
+      {% if may('enroll.create') %}<a class="btn" href="/settings/agents">Enrol agents</a>{% endif %}
+      {% if may('hosts.add_ssh') %}<a class="btn primary" href="/hosts/new">Add SSH hosts</a>{% endif %}
     </div>
     {% endif %}
   </div>
@@ -45,27 +45,36 @@
     </div>
   </form>
 
+  {% set bulk_may = may('hosts.scan') or may('runs.start') or may('bookings.create') or may('hosts.tag') or may('hosts.move') or may('hosts.delete') %}
   <form class="card" method="post" action="/hosts/bulk" style="overflow:hidden">
     {{ csrf_field() }}
     <input type="hidden" name="back" value="{{ request.url.path }}{{ ('?' ~ request.url.query) if request.url.query else '' }}">
-    {% if can(current_user, 'operator') and hosts %}
+    {% if bulk_may and hosts %}
     <div class="bulk">
       <strong>With the ticked hosts:</strong>
-      <button type="submit" class="btn small" name="action" value="scan">Scan</button>
+      {% if may('hosts.scan') %}<button type="submit" class="btn small" name="action" value="scan">Scan</button>{% endif %}
+      {% if may('runs.start') %}
       <button type="submit" class="btn small" name="action" value="apply_security">Apply security</button>
       <button type="submit" class="btn small" name="action" value="apply_all">Apply all</button>
-      <button type="submit" class="btn small" name="action" value="schedule">Schedule…</button>
-      <button type="submit" class="btn small" name="action" value="reboot">Reboot</button>
+      {% endif %}
+      {% if may('bookings.create') %}<button type="submit" class="btn small" name="action" value="schedule">Schedule…</button>{% endif %}
+      {% if may('runs.start') %}<button type="submit" class="btn small" name="action" value="reboot">Reboot</button>{% endif %}
       <details class="more">
         <summary>More</summary>
         <div class="actions-row" style="margin-top:8px">
+          {% if may('hosts.tag') %}
           <input name="tags" placeholder="tag, tag" aria-label="Tags to add">
           <button type="submit" class="btn small" name="action" value="tag">Add tags</button>
+          {% endif %}
+          {% if may('hosts.move') %}
           <select name="group_id" aria-label="Move to group"><option value="">No group</option>{% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}</select>
           <button type="submit" class="btn small" name="action" value="group">Move</button>
+          {% endif %}
+          {% if may('runs.start') %}
           <button type="submit" class="btn small" name="action" value="agent_update" title="Update the ticked hosts' agents to this server's version">Update agents</button>
           <button type="submit" class="btn small" name="action" value="auto_off" title="Stop unattended-upgrades or dnf-automatic installing updates by themselves">Turn off automatic updates</button>
-          {% if can(current_user, 'admin') %}<button type="submit" class="btn small danger" name="action" value="delete">Remove</button>{% endif %}
+          {% endif %}
+          {% if may('hosts.delete') %}<button type="submit" class="btn small danger" name="action" value="delete">Remove</button>{% endif %}
         </div>
       </details>
     </div>

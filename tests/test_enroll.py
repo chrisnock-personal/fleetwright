@@ -1,142 +1,100 @@
-"""Enrolment end to end: an agent's own instance id decides which host it is,
-even when several containers report the same machine id, hostname and boot id.
-An agent that doesn't send one still uses the old machine/hostname/boot checks."""
+"""Enrolment validates the request before spending a token: a malformed facts payload
+must not use up a single-use token and lock the real agent out."""
 
 import asyncio
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
-from fleetwright import fleet, gateway, security
+from fleetwright import db, gateway
 
-TOKEN = "an-enrolment-token-for-these-tests"   # only its hash is ever kept
-ID_A = "11111111-1111-4111-8111-111111111111"
-ID_B = "22222222-2222-4222-8222-222222222222"
-SHARED = {"hostname": "web", "machine_id": "machine-a", "boot_id": "kernel-boot",
-          "address": "10.9.0.1", "os_id": "ubuntu", "os_version": "24.04", "family": "apt"}
+VALID_FACTS = {"hostname": "web-01", "machine_id": "machine-1", "boot_id": "boot-1",
+               "address": "10.0.0.1", "os_id": "ubuntu", "booted_at": 1760000000}
+TOKEN = "an-enrolment-token"
 
 
-class FakeDB:
-    """Just the queries enroll() and record_facts() make, against in-memory hosts."""
+class FakeRequest:
+    def __init__(self, body):
+        self.body = body
+        self.client = SimpleNamespace(host="127.0.0.1")
 
-    def __init__(self):
-        self.hosts = []
-        self.audit_log = []
-        self.next_id = 1
-
-    async def fetchone(self, sql, *args):
-        if "UPDATE enroll_tokens" in sql:
-            return {"id": 7, "group_id": None, "tags": [], "label": "test token"} \
-                if args[0] == security.token_hash(TOKEN) else None
-        if "WHERE name = %s" in sql:
-            return next((h for h in self.hosts if h["name"] == args[0]), None)
-        raise AssertionError(f"unexpected fetchone: {sql}")
-
-    async def fetch(self, sql, *args):
-        assert "SELECT id, name, hostname" in sql
-        machine, _, instance, _ = args
-        return [dict(h) for h in sorted(self.hosts, key=lambda h: h["id"])
-                if h["mode"] == "agent"
-                and ((machine and h["machine_id"] == machine)
-                     or (instance and h["instance_id"] == instance))]
-
-    async def fetchval(self, sql, *args):
-        assert "INSERT INTO hosts" in sql
-        name, address, group, tags, token_hash, instance = args
-        host = {"id": self.next_id, "name": name, "address": address, "mode": "agent",
-                "group_id": group, "tags": tags, "agent_token_hash": token_hash,
-                "instance_id": instance, "machine_id": None, "hostname": None,
-                "boot_id": None, "agent_connected": False}
-        self.next_id += 1
-        self.hosts.append(host)
-        return host["id"]
-
-    async def execute(self, sql, *args):
-        if "UPDATE enroll_tokens" in sql:
-            return 1
-        if "UPDATE hosts SET agent_token_hash" in sql:
-            token_hash, instance, host_id = args
-            h = self._host(host_id)
-            h["agent_token_hash"] = token_hash
-            h["instance_id"] = instance or h["instance_id"]
-            return 1
-        if "UPDATE hosts SET os_id" in sql:
-            h = self._host(args[-1])
-            keys = ("os_id", "os_version", "os_pretty", "family", "kernel", "boot_id",
-                    "booted_at", "machine_id", "instance_id", "hostname")
-            for key, value in zip(keys, args):
-                if value is not None:
-                    h[key] = value
-            return 1
-        raise AssertionError(f"unexpected execute: {sql}")
-
-    async def audit(self, actor, what):
-        self.audit_log.append((actor, what))
-
-    def _host(self, host_id):
-        return next(h for h in self.hosts if h["id"] == host_id)
+    async def json(self):
+        return self.body
 
 
 @pytest.fixture
-def db(monkeypatch):
-    fake = FakeDB()
-    monkeypatch.setattr(gateway, "db", fake)
-    monkeypatch.setattr(fleet, "db", fake)
-    return fake
+def token_db(monkeypatch):
+    """One single-use token, and just enough of the database for an enrolment."""
+    state = {"uses_left": 1}
+    calls = []
+
+    async def fetchone(sql, *args):
+        calls.append(sql)
+        if "UPDATE enroll_tokens" not in sql:
+            return None
+        if state["uses_left"] <= 0:
+            return None
+        state["uses_left"] -= 1
+        return {"id": 11, "group_id": 1, "tags": None, "label": "test token"}
+
+    async def fetch(sql, *args):
+        return []
+
+    async def fetchval(sql, *args):
+        assert sql.lstrip().startswith("INSERT INTO hosts")
+        return 42
+
+    async def execute(sql, *args):
+        return 1
+
+    async def audit(actor, what):
+        calls.append(what)
+
+    monkeypatch.setattr(db, "fetchone", fetchone)
+    monkeypatch.setattr(db, "fetch", fetch)
+    monkeypatch.setattr(db, "fetchval", fetchval)
+    monkeypatch.setattr(db, "execute", execute)
+    monkeypatch.setattr(db, "audit", audit)
+    return state, calls
 
 
-def enroll(facts):
-    class Request:
-        client = SimpleNamespace(host="192.0.2.10")
-
-        async def json(self):
-            return {"token": TOKEN, "facts": facts}
-
-    return asyncio.run(gateway.enroll(Request()))
+def post(body):
+    return asyncio.run(gateway.enroll(FakeRequest(body)))
 
 
-def facts(instance=None, **changes):
-    return dict(SHARED, instance_id=instance, **changes)
+BAD_BODIES = [
+    {"token": TOKEN, "facts": "oops"},                       # the reported case
+    {"token": TOKEN, "facts": ["web-01"]},
+    {"token": TOKEN, "facts": 7},
+    {"token": TOKEN},                                        # facts missing
+    {"token": TOKEN, "facts": {"hostname": ["web-01"]}},     # right shape, wrong field type
+    "oops",                                                  # not an object at all
+]
 
 
-def test_two_containers_with_identical_legacy_facts_get_two_hosts(db):
-    # Same image: same machine id, hostname and kernel boot id. Only the agents'
-    # own instance ids differ, and neither enrolment may take over the other host.
-    a = enroll(facts(ID_A))
-    token_a = db.hosts[0]["agent_token_hash"]
-    b = enroll(facts(ID_B))
-    assert b["host_id"] != a["host_id"]
-    assert b["name"] != a["name"]
-    assert [h["instance_id"] for h in db.hosts] == [ID_A, ID_B]
-    assert db.hosts[0]["agent_token_hash"] == token_a
-    assert db.hosts[0]["agent_token_hash"] != db.hosts[1]["agent_token_hash"]
-    assert "same /etc/machine-id" in db.audit_log[-1][1]
+@pytest.mark.parametrize("body", BAD_BODIES)
+def test_a_bad_request_is_400_and_leaves_the_token_alone(token_db, body):
+    state, calls = token_db
+    with pytest.raises(HTTPException) as e:
+        post(body)
+    assert e.value.status_code == 400
+    assert state["uses_left"] == 1
+    assert not any("UPDATE enroll_tokens" in sql for sql in calls)
 
 
-def test_a_reinstall_with_the_same_instance_id_keeps_its_host(db):
-    first = enroll(facts(ID_A))
-    again = enroll(facts(ID_A, machine_id="machine-b", boot_id="boot-b"))
-    assert again["host_id"] == first["host_id"]
-    assert again["name"] == first["name"]
-    assert "Re-enrolled" in db.audit_log[-1][1]
+def test_a_valid_enrolment_still_spends_one_use(token_db):
+    state, calls = token_db
+    result = post({"token": TOKEN, "facts": VALID_FACTS})
+    assert state["uses_left"] == 0
+    assert sum("UPDATE enroll_tokens" in sql for sql in calls) == 1
+    assert result["host_id"] == 42 and result["name"] == "web-01" and result["agent_token"]
 
 
-def test_an_agent_without_an_instance_id_uses_the_old_checks(db):
-    first = enroll(facts())
-    db.hosts[0]["agent_connected"] = True   # install.sh enrols before restarting the old agent
-    again = enroll(facts())
-    assert again["host_id"] == first["host_id"]
-    assert db.audit_log[-1][1].startswith("Re-enrolled")
-
-    # A clone with a different boot id while the original is connected still gets
-    # a host of its own: the legacy fallback hasn't gone away.
-    clone = enroll(facts(boot_id="boot-b"))
-    assert clone["host_id"] != first["host_id"]
-
-
-def test_an_upgraded_legacy_host_records_its_instance_id(db):
-    first = enroll(facts())
-    asyncio.run(fleet.record_facts(first["host_id"], facts(ID_A)))
-    assert db.hosts[0]["instance_id"] == ID_A
-    assert enroll(facts(ID_A))["host_id"] == first["host_id"]
-    assert enroll(facts(ID_B))["host_id"] != first["host_id"]
+def test_a_used_up_token_is_still_refused(token_db):
+    state, _ = token_db
+    state["uses_left"] = 0
+    with pytest.raises(HTTPException) as e:
+        post({"token": TOKEN, "facts": VALID_FACTS})
+    assert e.value.status_code == 403
+    assert state["uses_left"] == 0

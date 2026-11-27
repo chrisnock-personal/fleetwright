@@ -14,7 +14,7 @@ from ..actions import hosts as host_actions
 from ..actions import runs as run_actions
 from ..actions.core import ActionError, invalid
 from ..actions.hosts import STATUS_FILTERS, parse_host_lines  # noqa: F401 - tests import it from here
-from ..webcommon import as_list, attempt, flash, form_data, may, redirect, render, split_words, who
+from ..webcommon import as_list, attempt, flash, form_data, redirect, render, require_action, split_words, who
 
 router = APIRouter()
 PER_PAGE = (25, 50, 100, 250)
@@ -109,7 +109,7 @@ async def scan_all(request: Request):
 
 @router.get("/hosts/new", response_class=HTMLResponse)
 async def host_new_page(request: Request):
-    may(request, "hosts.add_ssh")
+    require_action(request, "hosts.add_ssh")
     return render(request, "host_new.html", form={}, errors=[], **await _choices())
 
 
@@ -170,7 +170,7 @@ async def host_action(request: Request, host_id: int):
             return redirect(back)
         chosen = {host_id: [{"name": n, "arch": a} for n, a in picked]}
         if action == "schedule_selected":
-            may(request, "bookings.create")
+            require_action(request, "bookings.create")
             pins, bounce = await attempt(request, run_actions.pin_picked(chosen), back)
             if bounce:
                 return bounce

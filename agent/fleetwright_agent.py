@@ -277,10 +277,16 @@ class Agent:
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": str(e)}
 
-    def add_trust(self, pem: str) -> None:
+    async def add_trust(self, pem: str, pin: str = "") -> None:
         """Remember a certificate the server sent over the already-verified connection,
-        so the agent still connects after the server's certificate is replaced."""
-        if "BEGIN CERTIFICATE" not in pem or pem in (self.cfg.get("trust") or []):
+        so the agent still connects after the server's certificate is replaced. Acknowledge
+        the pin so the dashboard knows this agent can reconnect with it."""
+        if "BEGIN CERTIFICATE" not in pem:
+            log.warning("ignored an unreadable certificate from the server")
+            return
+        if pem in (self.cfg.get("trust") or []):
+            if pin:
+                await self.send({"type": "trust_ack", "pin": pin})   # already trusted
             return
         try:
             ssl.create_default_context().load_verify_locations(cadata=pem)
@@ -290,6 +296,8 @@ class Agent:
         self.cfg["trust"] = ((self.cfg.get("trust") or []) + [pem])[-4:]
         save_config(self.cfg)
         log.info("now also trusting a new server certificate")
+        if pin:
+            await self.send({"type": "trust_ack", "pin": pin})
 
     async def session(self) -> None:
         self.ws = await ws_connect(self.cfg)
@@ -315,7 +323,7 @@ class Agent:
                 elif kind == "ping":
                     await self.send({"type": "pong"})
                 elif kind == "trust":
-                    self.add_trust(str(msg.get("pem") or ""))
+                    await self.add_trust(str(msg.get("pem") or ""), str(msg.get("pin") or ""))
         finally:
             self.ws = None
 

@@ -66,7 +66,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
   instead. They're pinned to the versions pending now, as on a host's page.
 - **Idempotency-Key**: send the same key again (a retry after a timeout, say)
   and you get the first answer back, with `Idempotent-Replayed: true`, instead
-  of a second run. Keys last a day. They work on `POST /runs`,
+  of a second run. The key is claimed atomically in the database, so two requests
+  sent at the same time also start just one run: the second waits briefly and
+  replays the first one's answer. Keys last a day. They work on `POST /runs`,
   `/runs/{id}/retry`, `/policies/{id}/run` and `/agents/update`.
 
 Follow a run as it happens with Server-Sent Events:
@@ -146,6 +148,9 @@ Generated from the code: each endpoint, the lowest role allowed, and what it doe
 | `POST /bookings/{booking_id}/approve` | Admin | Approve a booked install that needs an admin's approval. |
 | `POST /bookings/{booking_id}/cancel` | Operator | Cancel a booked install that hasn't started. |
 
+`on_window_close` is `finish_started` (the default: hosts already running finish, no new host starts), `carry_on`,
+or the legacy alias `stop`, which behaves exactly like `finish_started` — stopping an install in progress isn't safe.
+
 ### Overview and audit
 
 | Endpoint | Role | What it does |
@@ -203,7 +208,7 @@ Generated from the code: each endpoint, the lowest role allowed, and what it doe
 
 | Endpoint | Role | What it does |
 |---|---|---|
-| `GET /https` | Admin | The certificate FleetWright serves (names, expiry, fingerprint, the pin agents use). |
+| `GET /https` | Admin | The certificate FleetWright serves (names, expiry, fingerprint, the pin agents use), and agents whose recorded pin is old or unknown. |
 | `POST /https/certificate` | Admin | Install your own certificate (with any chain) and key; agents get it first, then FleetWright restarts. |
 | `POST /https/regenerate` | Admin | Make a new self-signed certificate (with extra names); agents get it first, then FleetWright restarts. |
 

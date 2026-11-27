@@ -7,12 +7,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from .. import config, notify
+from .. import config, gateway, notify
 from ..actions import admin
 from ..actions import runs as run_actions
 from ..actions import tokens as token_actions
 from ..actions.core import ActionError
-from ..webcommon import as_list, attempt, flash, form_data, may, redirect, render, split_words, who
+from ..webcommon import as_list, attempt, flash, form_data, redirect, render, require_action, split_words, who
 
 router = APIRouter()
 
@@ -23,7 +23,7 @@ def _id(v) -> int | None:
 
 @router.get("/settings")
 async def settings_home(request: Request):
-    may(request, "keys.list")
+    require_action(request, "keys.list")
     return redirect("/settings/keys")
 
 
@@ -68,7 +68,7 @@ async def key_delete(request: Request, kid: int):
 
 @router.get("/settings/groups", response_class=HTMLResponse)
 async def groups_page(request: Request):
-    may(request, "groups.save")
+    require_action(request, "groups.save")
     groups = (await admin.list_groups(who(request)))["groups"]
     return render(request, "settings_groups.html", groups=groups, section="groups")
 
@@ -248,9 +248,13 @@ async def audit_page(request: Request):
 
 def _https_page(request: Request, r: dict, error=None, restarting=False, status=200):
     from .. import tls
+    reenrol = r.get("reenrol") or {"available": False, "pin": None, "hosts": []}
+    new = request.session.pop("new_reenroll", None) if "session" in request.scope else None
     return render(request, "settings_https.html", section="https",
                   info=tls.current() if config.TLS_ON else None, tls_on=config.TLS_ON,
                   public_url=config.PUBLIC_URL, agents=r.get("agents_told", r.get("agents_connected", 0)),
+                  reenrol=reenrol, reenrol_command=(new or {}).get("command"),
+                  command_template=gateway.install_command("<enrolment token>") if reenrol["available"] else "",
                   error=error, restarting=restarting, http_status=status)
 
 
@@ -284,6 +288,17 @@ async def https_regenerate(request: Request):
     form = await form_data(request)
     r = await admin.https_regenerate(who(request), split_words(form.get("names")))
     return _https_page(request, r, restarting=True)
+
+
+@router.post("/settings/https/reenrol")
+async def https_reenrol_token(request: Request):
+    """Mint the enrolment token for the command shown on the HTTPS page."""
+    await form_data(request)
+    r = await admin.create_enroll_token(who(request), label="HTTPS re-enrol")
+    request.session["new_reenroll"] = {"label": r["label"], "command": r["install_command"]}
+    flash(request, "New enrolment token created; it's shown once below. Run it on each host that needs "
+                   "re-enrolling, then close this page.")
+    return redirect("/settings/https")
 
 
 # ─── Your account: API tokens ───────────────────────────────────────────────

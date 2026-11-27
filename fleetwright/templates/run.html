@@ -20,13 +20,13 @@
       </p>
       {% if run.note %}<p class="hint {{ 'warn' if run.status != 'done' }}" style="margin-top:6px">{{ run.note }}</p>{% endif %}
     </div>
-    {% if can(current_user, 'operator') %}
+    {% if may('runs.pause') or may('runs.resume') or may('runs.abort') or may('runs.retry') %}
     <form class="actions-row" method="post" action="/runs/{{ run.id }}/control">
       {{ csrf_field() }}
-      {% if run.status == 'running' %}<button type="submit" class="btn" name="action" value="pause">Pause after this batch</button>{% endif %}
-      {% if run.status == 'paused' %}<button type="submit" class="btn primary" name="action" value="resume">Resume</button>{% endif %}
-      {% if run.status in ('running', 'paused') %}<button type="submit" class="btn danger" name="action" value="abort">Abort</button>{% endif %}
-      {% if run.status not in ('running', 'paused') and totals.failed %}<button type="submit" class="btn" name="action" value="retry_failed">Retry the {{ totals.failed }} failed</button>{% endif %}
+      {% if may('runs.pause') and run.status == 'running' %}<button type="submit" class="btn" name="action" value="pause">Pause after this batch</button>{% endif %}
+      {% if may('runs.resume') and run.status == 'paused' %}<button type="submit" class="btn primary" name="action" value="resume">Resume</button>{% endif %}
+      {% if may('runs.abort') and run.status in ('running', 'paused') %}<button type="submit" class="btn danger" name="action" value="abort">Abort</button>{% endif %}
+      {% if may('runs.retry') and run.status not in ('running', 'paused') and totals.failed %}<button type="submit" class="btn" name="action" value="retry_failed">Retry the {{ totals.failed }} failed</button>{% endif %}
     </form>
     {% endif %}
   </div>

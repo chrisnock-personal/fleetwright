@@ -481,11 +481,32 @@ def _cert_out() -> Optional[dict]:
             "self_signed": info.self_signed, "sha256": info.sha256, "spki_pin": info.spki_pin}
 
 
+def cert_change_hosts(rows: list[dict], current_pin: Optional[str]) -> list[dict]:
+    """Agents that may not trust the current certificate: a different pin was last seen,
+    or FleetWright has no pin recorded for them (say so rather than guessing)."""
+    if not current_pin:
+        return []
+    out = []
+    for row in rows:
+        pin = row.get("agent_tls_pin") or ""
+        if pin == current_pin:
+            continue
+        out.append({"id": row.get("id"), "name": row["name"], "connected": bool(row.get("agent_connected")),
+                    "last_seen": row.get("last_seen"), "pin": pin or None,
+                    "state": "old_pin" if pin else "unknown"})
+    return out
+
+
 @action("https.get", "admin")
 async def https_status(who: Principal) -> dict:
-    """The certificate FleetWright serves (names, expiry, fingerprint, the pin agents use)."""
-    return {"tls": config.TLS_ON, "certificate": _cert_out(), "public_url": config.PUBLIC_URL,
-            "agents_connected": len(gateway.connected)}
+    """The certificate FleetWright serves, the pin agents use, and hosts that may need re-enrolling."""
+    cert = _cert_out()
+    pin = cert["spki_pin"] if cert else ""
+    rows = await db.fetch("""SELECT id, name, agent_connected, last_seen, agent_tls_pin
+                             FROM hosts WHERE mode = 'agent' ORDER BY name""") if pin else []
+    return {"tls": config.TLS_ON, "certificate": cert, "public_url": config.PUBLIC_URL,
+            "agents_connected": len(gateway.connected),
+            "reenrol": {"available": bool(pin), "pin": pin or None, "hosts": cert_change_hosts(rows, pin)}}
 
 
 async def _apply_new_cert(who: Principal, what: str) -> dict:
