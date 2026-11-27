@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+# libpq's sslmode values, in the order its docs list them.
+SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 
 
 def _int(name: str, default: int) -> int:
@@ -12,16 +16,45 @@ def _int(name: str, default: int) -> int:
         return default
 
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://{u}:{p}@{h}:{port}/{d}".format(
-        u=os.getenv("POSTGRES_USER", "fleetwright"),
-        p=os.getenv("POSTGRES_PASSWORD", "fleetwright"),
-        h=os.getenv("POSTGRES_HOST", "db"),
-        port=os.getenv("POSTGRES_PORT", "5432"),
-        d=os.getenv("POSTGRES_DB", "fleetwright"),
-    ),
-)
+def _database_url() -> str:
+    """The URL every DB connection uses. Explicit TLS settings are appended to it.
+
+    With neither FLEETWRIGHT_DB_SSLMODE nor FLEETWRIGHT_DB_SSLROOTCERT set, the
+    URL is returned exactly as configured, so the local compose database keeps
+    working as before. A DATABASE_URL supplied by the operator wins over the
+    POSTGRES_* parts; the TLS settings override sslmode/sslrootcert already in
+    its query string rather than adding a second copy of either.
+    """
+    url = os.getenv(
+        "DATABASE_URL",
+        "postgresql://{u}:{p}@{h}:{port}/{d}".format(
+            u=os.getenv("POSTGRES_USER", "fleetwright"),
+            p=os.getenv("POSTGRES_PASSWORD", "fleetwright"),
+            h=os.getenv("POSTGRES_HOST", "db"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            d=os.getenv("POSTGRES_DB", "fleetwright"),
+        ),
+    )
+    sslmode = os.getenv("FLEETWRIGHT_DB_SSLMODE", "").strip().lower()
+    sslrootcert = os.getenv("FLEETWRIGHT_DB_SSLROOTCERT", "").strip()
+    if not sslmode and not sslrootcert:
+        return url
+    if sslmode and sslmode not in SSL_MODES:
+        raise ValueError(
+            f"FLEETWRIGHT_DB_SSLMODE={sslmode!r} is not a libpq sslmode; "
+            f"use one of {', '.join(SSL_MODES)}")
+    changes = {}
+    if sslmode:
+        changes["sslmode"] = sslmode
+    if sslrootcert:
+        changes["sslrootcert"] = sslrootcert
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in changes]
+    query.extend(changes.items())
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+DATABASE_URL = _database_url()
 SECRET_KEY = os.getenv("FLEETWRIGHT_SECRET_KEY", "")
 # Earlier secret keys, comma-separated, while rotating: stored secrets encrypted under
 # one of these still decrypt, and are re-encrypted under SECRET_KEY at startup.
