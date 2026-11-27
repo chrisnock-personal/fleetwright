@@ -74,6 +74,9 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS machine_id TEXT;   -- /etc/machine-id
 -- share a machine id and a boot id, but get one of these each. NULL: an older agent,
 -- or a host enrolled before this was recorded; enrolment uses the old checks then.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS instance_id TEXT;
+-- Admin-pasted ssh-keyscan keys ('ssh-ed25519 AAAA…'), checked on every SSH connection.
+-- Empty: keep the old behaviour of pinning the key on first contact.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS ssh_known_hosts TEXT[] NOT NULL DEFAULT '{}';
 -- Other tools that install updates (unattended-upgrades, dnf-automatic), from the last scan:
 -- [{"tool": .., "installs": bool, "detail": ..}]. NULL: not reported (an older agent).
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;

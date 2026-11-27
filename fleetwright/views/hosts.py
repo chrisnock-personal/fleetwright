@@ -121,7 +121,8 @@ async def host_new(request: Request):
         if errors:
             raise invalid(errors)
         r = await host_actions.add_ssh(who(request), found, _int(form.get("credential_id")),
-                                       _int(form.get("group_id")), split_words(form.get("tags")))
+                                       _int(form.get("group_id")), split_words(form.get("tags")),
+                                       known_hosts=str(form.get("known_hosts") or ""))
     except ActionError as e:
         if e.code != "invalid":
             raise
@@ -211,8 +212,20 @@ async def host_edit(request: Request, host_id: int):
 async def host_forget_key(request: Request, host_id: int):
     await form_data(request)
     await host_actions.forget_key(who(request), host_id)
-    flash(request, "The pinned key is cleared; the next connection pins whatever key the host offers.", "info")
+    flash(request, "The recorded host keys are cleared; the next connection pins whatever key the host offers.", "info")
     return redirect(f"/hosts/{host_id}")
+
+
+@router.post("/hosts/{host_id}/known-hosts")
+async def host_known_hosts(request: Request, host_id: int):
+    """Replace the host keys recorded for one SSH host; an empty textarea clears them."""
+    form = await form_data(request)
+    _, bounce = await attempt(request,
+                              host_actions.edit(who(request), host_id, known_hosts=str(form.get("known_hosts") or "")),
+                              f"/hosts/{host_id}")
+    if not bounce:
+        flash(request, "Saved the host keys; every future connection checks them.", "ok")
+    return bounce or redirect(f"/hosts/{host_id}")
 
 
 @router.post("/hosts/{host_id}/delete")

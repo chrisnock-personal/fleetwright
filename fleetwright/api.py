@@ -264,13 +264,14 @@ class HostsIn(Body):
     credential_id: int = Field(description="The stored SSH key to connect with")
     group_id: Optional[int] = None
     tags: list[str] = []
+    known_hosts: Optional[str] = Field(None, description="Pasted ssh-keyscan output; checked on every connection")
 
 
 @api.post("/hosts", tags=["hosts"], status_code=201, summary="Add SSH hosts")
 @uses("hosts.add_ssh")
 async def host_add(body: HostsIn, who: Principal = Who):
     return ok(await hosts.add_ssh(who, [h.model_dump() for h in body.hosts], body.credential_id, body.group_id,
-                                  body.tags), 201)
+                                  body.tags, body.known_hosts), 201)
 
 
 @api.get("/hosts/{host_id}", tags=["hosts"])
@@ -287,6 +288,8 @@ class HostEdit(Body):
     group_id: Optional[int] = None
     tags: Optional[list[str]] = None
     held: Optional[list[str]] = Field(None, description='"Never install" package patterns')
+    known_hosts: Optional[str] = Field(None, description="Paste ssh-keyscan output to replace recorded host keys; "
+                                                         "an empty string clears them")
 
 
 @api.patch("/hosts/{host_id}", tags=["hosts"], summary="Change a host; only the fields sent change")

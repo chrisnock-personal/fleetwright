@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import re
 from datetime import datetime
 from typing import Optional
+
+import asyncssh
 
 from .. import db, fleet, gateway
 from .core import Principal, action, invalid, not_found
@@ -164,11 +167,65 @@ def parse_host_lines(text: str) -> tuple[list[dict], list[str]]:
     return out, errors
 
 
+KNOWN_HOST_TYPES = ("ssh-ed25519", "ssh-rsa")
+
+
+def parse_known_hosts(text: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """Parse pasted ``ssh-keyscan`` output into (host pattern, public key) pairs.
+
+    Keys are returned in canonical ``'ssh-ed25519 AAAA…'`` form, the same format
+    sshrun.py can hand to asyncssh. Unknown lines are reported with a line number
+    rather than silently trusted: this is opt-in protection against a first-use
+    impostor, so a typo must not turn back into trust-on-first-use.
+    """
+    entries, errors = [], []
+    for n, raw in enumerate(str(text or "").splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            errors.append(f"Known host keys, line {n}: expected 'host ssh-ed25519 AAAA…' or "
+                          "'host ssh-rsa AAAA…'")
+            continue
+        pattern, key_type, encoded = parts[:3]
+        if key_type not in KNOWN_HOST_TYPES:
+            errors.append(f"Known host keys, line {n}: '{key_type}' isn't a supported key type "
+                          f"(use {' or '.join(KNOWN_HOST_TYPES)})")
+            continue
+        try:
+            blob = base64.b64decode(encoded, validate=True)
+            if not blob:
+                raise ValueError("empty key")
+            key = f"{key_type} {base64.b64encode(blob).decode('ascii')}"
+            asyncssh.import_public_key(key)          # also rejects well-formed base64 that isn't an SSH key
+        except ValueError:
+            errors.append(f"Known host keys, line {n}: {key_type} key isn't valid base64/SSH key data")
+            continue
+        entries.append((pattern, key))
+    return entries, errors
+
+
+def _keys_for_host(entries: list[tuple[str, str]], host: dict) -> list[str]:
+    """keyscan output may name a host by name, address or '[address]:port'. Prefer
+    keys for this host; if none of the patterns match, keep every pasted key (a
+    single-host add often uses a DNS name we don't record as the host's name)."""
+    addr = str(host.get("address") or "")
+    port = int(host.get("port") or 22)
+    names = {str(host.get("name") or ""), addr, f"[{addr}]:{port}", f"{addr}:{port}"}
+    names.discard("")
+    matched = [key for pattern, key in entries if pattern.lower() in names]
+    return list(dict.fromkeys(matched or [key for _, key in entries]))
+
+
 @action("hosts.add_ssh", "operator")
 async def add_ssh(who: Principal, hosts: list[dict], credential_id: Optional[int], group_id: Optional[int] = None,
-                  tags: Optional[list[str]] = None) -> dict:
-    """Add agentless hosts ({name, address, port}) that FleetWright reaches over SSH with a stored key; each is scanned."""
-    errors = []
+                  tags: Optional[list[str]] = None, known_hosts: Optional[str] = None) -> dict:
+    """Add agentless hosts ({name, address, port}) that FleetWright reaches over SSH with a stored key;
+    known_hosts is optional pasted ssh-keyscan output, verified on every later connection."""
+    entries, errors = parse_known_hosts(known_hosts)
+    if known_hosts and str(known_hosts).strip() and not entries and not errors:
+        errors.append("Known host keys: paste at least one ssh-keyscan line.")
     for h in hosts:
         if not NAME_RE.match(str(h.get("name", ""))):
             errors.append(f"'{h.get('name')}' isn't a usable host name")
@@ -186,9 +243,10 @@ async def add_ssh(who: Principal, hosts: list[dict], credential_id: Optional[int
     added, existing = [], []
     for h in hosts:
         hid = await db.fetchval(
-            """INSERT INTO hosts (name, address, port, mode, credential_id, group_id, tags)
-               VALUES (%s, %s, %s, 'ssh', %s, %s, %s) ON CONFLICT (name) DO NOTHING RETURNING id""",
-            h["name"], h["address"], int(h.get("port") or 22), credential_id, group_id, list(tags or []))
+            """INSERT INTO hosts (name, address, port, mode, credential_id, group_id, tags, ssh_known_hosts)
+               VALUES (%s, %s, %s, 'ssh', %s, %s, %s, %s) ON CONFLICT (name) DO NOTHING RETURNING id""",
+            h["name"], h["address"], int(h.get("port") or 22), credential_id, group_id, list(tags or []),
+            _keys_for_host(entries, h))
         (added if hid else existing).append(hid or h["name"])
     if added:
         await fleet.queue_scan(added)
@@ -201,9 +259,16 @@ _UNSET = object()
 
 @action("hosts.edit", "operator")
 async def edit(who: Principal, host_id: int, *, name=_UNSET, address=_UNSET, port=_UNSET, credential_id=_UNSET,
-               group_id=_UNSET, tags=_UNSET, held=_UNSET) -> dict:
-    """Change a host's name, group, tags, "never install" list, and (SSH hosts) address, port and key."""
+               group_id=_UNSET, tags=_UNSET, held=_UNSET, known_hosts=_UNSET) -> dict:
+    """Change a host's name, group, tags, "never install" list, and (SSH hosts) address,
+    port, key and recorded host keys (empty known_hosts clears them)."""
     h = await _get(host_id)
+    keys = None
+    if known_hosts is not _UNSET and h["mode"] == "ssh":
+        entries, key_errors = parse_known_hosts(known_hosts)
+        if key_errors:
+            raise invalid(key_errors)
+        keys = list(dict.fromkeys(key for _, key in entries))
     if name is not _UNSET and name != h["name"]:
         if not NAME_RE.match(str(name)):
             raise invalid("Names use letters, digits, dots, dashes and underscores.")
@@ -215,6 +280,10 @@ async def edit(who: Principal, host_id: int, *, name=_UNSET, address=_UNSET, por
                          h["address"] if address is _UNSET else address,
                          h["port"] if port is _UNSET or port is None else int(port),
                          h["credential_id"] if credential_id is _UNSET else credential_id, host_id)
+        if keys is not None:
+            # Supplied keys replace both the pasted set and any key pinned by first use.
+            await db.execute("UPDATE hosts SET ssh_known_hosts = %s, ssh_host_key = NULL WHERE id = %s",
+                             keys, host_id)
     await db.execute("UPDATE hosts SET group_id = %s, tags = %s, held = %s WHERE id = %s",
                      h["group_id"] if group_id is _UNSET else group_id,
                      h["tags"] if tags is _UNSET else list(tags or []),
@@ -255,10 +324,11 @@ async def scan(who: Principal, host_ids: Optional[list[int]] = None) -> dict:
 
 @action("hosts.forget_key", "admin")
 async def forget_key(who: Principal, host_id: int) -> dict:
-    """Clear a host's pinned SSH host key; the next connection pins whatever key it offers."""
+    """Clear a host's pinned and pasted SSH host keys; the next connection pins whatever key it offers."""
     h = await _get(host_id)
-    await db.execute("UPDATE hosts SET ssh_host_key = NULL, last_error = NULL WHERE id = %s", host_id)
-    await db.audit(who.actor, f"Cleared the pinned SSH host key of {h['name']}")
+    await db.execute("UPDATE hosts SET ssh_host_key = NULL, ssh_known_hosts = '{}', last_error = NULL WHERE id = %s",
+                     host_id)
+    await db.audit(who.actor, f"Cleared the SSH host keys of {h['name']}")
     return {"ok": True}
 
 
