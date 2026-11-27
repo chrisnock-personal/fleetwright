@@ -167,6 +167,13 @@
       </section>
 
       <section class="card panel">
+        <div class="panel-head"><h2>OS-level holds</h2><span class="hint">apt-mark / dnf versionlock</span></div>
+        {% if h.os_holds %}
+        <div class="facts pad">{% for hold in h.os_holds %}<div>Package<b class="mono">{{ hold }}</b></div>{% endfor %}</div>
+        {% else %}<p class="empty">{{ 'none reported in the last scan' if h.last_scan_at else 'not scanned yet' }}</p>{% endif %}
+      </section>
+
+      <section class="card panel">
         <div class="panel-head"><h2>History</h2></div>
         <div>
           {% for t in history %}
