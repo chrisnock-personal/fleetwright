@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import sys
+import uuid
 
 import pytest
 
@@ -86,10 +87,30 @@ def test_already_current_does_nothing(installed, monkeypatch):
     assert result == {"ok": True, "restarting": False}
 
 
+# ─── The agent's own instance id ────────────────────────────────────────────
+
+def test_instance_id_is_created_once_and_reused(tmp_path, monkeypatch):
+    path = tmp_path / "fleetwright-agent" / "instance-id"
+    monkeypatch.setattr(pkgops, "INSTANCE_ID_PATH", str(path))
+    first = pkgops.instance_id()
+    assert uuid.UUID(first)
+    assert path.read_text().strip() == first
+    assert pkgops.instance_id() == first
+    path.write_text("not an id\n")            # a damaged file is replaced
+    assert pkgops.instance_id() != first
+
+
+def test_facts_carry_the_instance_id(monkeypatch):
+    monkeypatch.setattr(pkgops, "instance_id", lambda: "an-instance-id")
+    monkeypatch.setattr(pkgops, "family", lambda: "apt")
+    assert pkgops.facts()["instance_id"] == "an-instance-id"
+
+
 # ─── Telling a reinstall from a cloned machine ─────────────────────────────
 
-def _host(i, name, boot, connected, hostname=None):
-    return {"id": i, "name": name, "boot_id": boot, "agent_connected": connected, "hostname": hostname}
+def _host(i, name, boot, connected, hostname=None, instance=None):
+    return {"id": i, "name": name, "boot_id": boot, "agent_connected": connected,
+            "hostname": hostname, "instance_id": instance}
 
 
 def test_reinstall_on_the_running_machine_keeps_its_host():
@@ -117,6 +138,23 @@ def test_containers_sharing_a_kernel_and_a_machine_id_stay_apart():
     # every container on one kernel reports the same boot id
     web1 = _host(1, "web1", "kernel-boot", True, "web1")
     assert gateway.same_machine({"boot_id": "kernel-boot"}, "web2", [web1]) is None
+
+
+def test_a_different_instance_id_never_takes_over_the_same_host():
+    # identical machine id, hostname and kernel boot id: only the instance id differs
+    web1 = _host(1, "web1", "kernel-boot", True, "web1", "instance-1")
+    assert gateway.same_machine({"boot_id": "kernel-boot", "instance_id": "instance-2"},
+                                "web1", [web1]) is None
+    # an agent upgraded on a host with no id yet still matches the old checks
+    old = _host(2, "web2", "kernel-boot", True, "web2")
+    assert gateway.same_machine({"boot_id": "kernel-boot", "instance_id": "instance-2"},
+                                "web2", [old]) is old
+
+
+def test_the_same_instance_id_keeps_its_host_even_if_the_machine_id_changed():
+    web1 = _host(1, "web1", "boot-a", True, "web1", "instance-1")
+    assert gateway.same_machine({"boot_id": "boot-b", "instance_id": "instance-1"},
+                                "web1", [web1]) is web1
 
 
 def test_a_reinstall_on_the_second_of_two_clones_finds_the_right_one():

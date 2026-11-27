@@ -85,8 +85,9 @@ SHARED_TOKEN = ("Two machines are using this host's agent identity and keep repl
 
 def shared_identity(seen: list[tuple[str, float]], window: float = 600) -> bool:
     """Hellos alternating between two machines (A, B, A) within the window. A machine is
-    its boot id, hostname and address together: containers on one kernel share a boot
-    id. A reboot or a new address goes A → B and doesn't come back; a reconnect stays on A."""
+    its instance id (its boot id for an older agent), hostname and address together:
+    containers on one kernel share a boot id. A reboot or a new address goes A → B and
+    doesn't come back; a reconnect stays on A."""
     if len(seen) < 3:
         return False
     (a, ta), (b, _), (c, tc) = seen[-3:]
@@ -97,12 +98,23 @@ _wake = asyncio.Event()
 # ─── Enrolment and the install script ───────────────────────────────────────
 
 def same_machine(facts: dict, hostname: str, candidates: list[dict]) -> Optional[dict]:
-    """Which of the agent hosts sharing this /etc/machine-id (if any) the enrolling
-    machine is. A reinstall has the same hostname and, while its old agent is still
-    connected (install.sh enrols before restarting it), the same boot. Anything else
-    sharing the id is a cloned machine (a VM template, an image whose machine-id
-    wasn't regenerated) and gets a host of its own rather than taking this one over.
-    Not the boot id alone: containers on one kernel all report the kernel's."""
+    """Which of the hosts that could be this machine (same machine id or instance id)
+    the enrolling agent is. An agent's own instance id wins: two containers from one
+    image share a machine id, hostname and boot id, but each has its own id, so a
+    different one never takes the other's host over. Without an id on both sides,
+    fall back to the old checks: a reinstall keeps the hostname and, while its old
+    agent is still connected (install.sh enrols before restarting it), the boot;
+    a cloned machine gets a host of its own."""
+    instance = str(facts.get("instance_id") or "")
+    if instance:
+        for c in candidates:
+            if c.get("instance_id") == instance:
+                return c
+        # Every candidate with an id is a different installation, even if its
+        # hostname and boot id match. Hosts with no id yet are older agents:
+        # a reinstall of one of those can still be matched the old way.
+        if any(c.get("instance_id") for c in candidates):
+            return None
     boot = facts.get("boot_id")
     for c in candidates:
         if (c.get("hostname") or c.get("name")) != hostname:
@@ -127,6 +139,7 @@ class EnrollFacts(BaseModel):
     kernel: Optional[str] = None
     booted_at: Optional[int] = None
     pkgops: Optional[str] = None
+    instance_id: Optional[str] = None
 
 
 class EnrollIn(BaseModel):
@@ -167,35 +180,43 @@ async def enroll(request: Request):
     pin = server_pin()
     reuse, clone_of = None, None
     machine_id = str(facts.get("machine_id") or "")
-    if machine_id:
-        # The same machine enrolling again (a reinstall) keeps its host, name and history.
-        candidates = await db.fetch("""SELECT id, name, hostname, boot_id, agent_connected FROM hosts
-                                        WHERE machine_id = %s AND mode = 'agent' ORDER BY id""", machine_id)
+    instance = str(facts.get("instance_id") or "")[:64]
+    if machine_id or instance:
+        # Look up both ids: a reinstall keeps its instance id even if its machine
+        # id changed, and an old agent has no instance id to look up.
+        candidates = await db.fetch(
+            """SELECT id, name, hostname, boot_id, agent_connected, instance_id FROM hosts
+                WHERE mode = 'agent' AND ((%s <> '' AND machine_id = %s)
+                                          OR (%s <> '' AND instance_id = %s))
+                ORDER BY id""", machine_id, machine_id, instance, instance)
         reuse = same_machine(facts, str(facts.get("hostname") or ""), candidates)
         if not reuse and candidates:
             clone_of = candidates[0]["name"]
     if reuse:
         name = reuse["name"]
     else:
-        taken = await db.fetchone("SELECT id, mode, machine_id FROM hosts WHERE name = %s", name)
+        taken = await db.fetchone("SELECT id, mode, machine_id, instance_id FROM hosts WHERE name = %s", name)
         # By name only for an agent host enrolled before machine ids were recorded; a
-        # different machine that happens to share a hostname mustn't take a host over.
-        if taken and taken["mode"] == "agent" and not taken["machine_id"] and not clone_of:
+        # different machine that happens to share a hostname mustn't take a host over,
+        # nor may a different installation with the same name.
+        other_install = bool(instance and taken and taken["instance_id"] and taken["instance_id"] != instance)
+        if taken and taken["mode"] == "agent" and not taken["machine_id"] and not clone_of and not other_install:
             reuse = taken
         elif taken:
             name = f"{name}-{security.new_token(3).lower()}"
     if reuse:
         host_id = reuse["id"]
-        await db.execute("UPDATE hosts SET agent_token_hash = %s, agent_tls_pin = %s WHERE id = %s",
-                         security.token_hash(agent_token), pin or None, host_id)
+        await db.execute("""UPDATE hosts SET agent_token_hash = %s, agent_tls_pin = %s,
+                                             instance_id = COALESCE(%s, instance_id)
+                            WHERE id = %s""",
+                         security.token_hash(agent_token), pin or None, instance or None, host_id)
         what = f"Re-enrolled agent on {name}"
     else:
         host_id = await db.fetchval(
-            """INSERT INTO hosts (name, address, mode, group_id, tags, agent_token_hash, agent_tls_pin)
-               VALUES (%s, %s, 'agent', %s, %s, %s, %s) RETURNING id""",
+            """INSERT INTO hosts (name, address, mode, group_id, tags, agent_token_hash, agent_tls_pin, instance_id)
+               VALUES (%s, %s, 'agent', %s, %s, %s, %s, %s) RETURNING id""",
             name, str(facts.get("address") or (request.client.host if request.client else "")),
-            row["group_id"], row["tags"],
-            security.token_hash(agent_token), pin or None)
+            row["group_id"], row["tags"], security.token_hash(agent_token), pin or None, instance or None)
         what = f"Enrolled agent on {name}"
         if clone_of:
             what += (f" (it has the same /etc/machine-id as {clone_of}: a cloned machine? "
@@ -336,9 +357,10 @@ async def handle(conn: AgentConn, msg: dict) -> None:
         bundle = str(msg.get("bundle") or "")[:40] or None
         await db.execute("UPDATE hosts SET agent_version = %s, agent_bundle = %s, last_error = NULL WHERE id = %s",
                          str(msg.get("version", ""))[:40], bundle, hid)
-        if facts.get("boot_id"):
+        if facts.get("boot_id") or facts.get("instance_id"):
             seen = recent_boots.setdefault(hid, [])
-            machine = f"{facts['boot_id']}|{facts.get('hostname', '')}|{facts.get('address', '')}"
+            machine = "|".join((str(facts.get("instance_id") or facts.get("boot_id") or ""),
+                                str(facts.get("hostname", "")), str(facts.get("address", ""))))
             seen.append((machine, time.monotonic()))
             del seen[:-3]
             if shared_identity(seen):

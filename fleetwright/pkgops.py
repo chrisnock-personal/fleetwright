@@ -12,7 +12,7 @@ Run as a script it prints progress lines, then one final line:
     FWRESULT {"ok": true, ...}
 
 Operations
-    facts                  what the host is (OS, kernel, boot id)
+    facts                  what the host is (OS, kernel, boot id, instance id)
     scan                   refresh the package lists and list pending updates
     apply  <selection>     install the updates a selection picks (JSON argument)
     reboot                 reboot in a few seconds, returning first
@@ -33,9 +33,13 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 RESULT_PREFIX = "FWRESULT "
+# An id for this installation, made after install time. A container image's
+# /etc/machine-id can be copied from its template; this file normally isn't.
+INSTANCE_ID_PATH = "/etc/fleetwright-agent/instance-id"
 
 SEVERITY_ORDER = {"low": 1, "moderate": 2, "important": 3, "critical": 4}
 KERNEL_PATTERNS = ("kernel", "kernel-core", "kernel-modules*", "kernel-uki-virt",
@@ -113,6 +117,36 @@ def _read(path: str) -> str:
         return ""
 
 
+def instance_id() -> str:
+    """This installation's uuid: created once, then read back on every call.
+
+    Reinstalling the agent keeps it. Two containers from one image on one kernel
+    can share a machine id, a hostname and a boot id, but not this file, so the
+    gateway can tell them apart when they enrol. If /etc is read-only, an id is
+    still sent, but a new one is made each time the agent starts.
+    """
+    value = _read(INSTANCE_ID_PATH)
+    try:
+        uuid.UUID(value)
+        return value
+    except ValueError:
+        pass
+    value = str(uuid.uuid4())
+    tmp = INSTANCE_ID_PATH + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(INSTANCE_ID_PATH), mode=0o700, exist_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(value + "\n")
+        os.replace(tmp, INSTANCE_ID_PATH)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return value
+
+
 def facts() -> dict:
     osr = _os_release()
     uptime = _read("/proc/uptime").split()
@@ -120,6 +154,7 @@ def facts() -> dict:
     return {
         "hostname": socket.gethostname(),
         "machine_id": _read("/etc/machine-id"),
+        "instance_id": instance_id(),
         "os_id": osr.get("ID", ""),
         "os_version": osr.get("VERSION_ID", ""),
         "os_pretty": osr.get("PRETTY_NAME", ""),

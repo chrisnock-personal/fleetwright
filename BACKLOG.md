@@ -24,7 +24,6 @@ Nothing at the moment: pick the next ones from below.
 
 ## Fixes and tidy-ups
 
-- [#37](https://github.com/chrisnock-personal/fleetwright/issues/37) Containers sharing a kernel, machine id and hostname enrol as one machine
 - [#38](https://github.com/chrisnock-personal/fleetwright/issues/38) Runs move to their next batch only on a 5-second tick
 - [#39](https://github.com/chrisnock-personal/fleetwright/issues/39) Policy preview: broad selections still take 0.3-0.6 s at 5,800 hosts
 - [#41](https://github.com/chrisnock-personal/fleetwright/issues/41) Templates show buttons by role instead of asking the action

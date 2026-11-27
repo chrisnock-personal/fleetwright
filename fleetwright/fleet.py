@@ -319,11 +319,13 @@ async def record_facts(host_id: int, facts: dict) -> None:
         """UPDATE hosts SET os_id = %s, os_version = %s, os_pretty = %s, pkg_family = %s,
                             kernel = %s, boot_id = %s, booted_at = %s, last_seen = NOW(),
                             machine_id = COALESCE(%s, machine_id),
+                            instance_id = COALESCE(%s, instance_id),
                             hostname = COALESCE(%s, hostname),
                             address = CASE WHEN mode = 'agent' AND %s <> '' THEN %s ELSE address END
             WHERE id = %s""",
         facts.get("os_id"), facts.get("os_version"), facts.get("os_pretty"), facts.get("family"),
         facts.get("kernel"), facts.get("boot_id"), booted, facts.get("machine_id") or None,
+        facts.get("instance_id") or None,
         facts.get("hostname") or None, facts.get("address") or "", facts.get("address") or "", host_id)
 
 

@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS hosts (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS machine_id TEXT;   -- /etc/machine-id, to recognise a re-enrolled host
+-- The agent's own uuid in /etc/fleetwright-agent/instance-id: containers from one image
+-- share a machine id and a boot id, but get one of these each. NULL: an older agent,
+-- or a host enrolled before this was recorded; enrolment uses the old checks then.
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS instance_id TEXT;
 -- Other tools that install updates (unattended-upgrades, dnf-automatic), from the last scan:
 -- [{"tool": .., "installs": bool, "detail": ..}]. NULL: not reported (an older agent).
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS auto_updates JSONB;
@@ -87,6 +91,7 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_tls_pin TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS hostname TEXT;
 CREATE INDEX IF NOT EXISTS idx_hosts_group ON hosts (group_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_machine ON hosts (machine_id);
+CREATE INDEX IF NOT EXISTS idx_hosts_instance ON hosts (instance_id);
 CREATE INDEX IF NOT EXISTS idx_hosts_tags ON hosts USING GIN (tags);
 
 CREATE TABLE IF NOT EXISTS pending_updates (
