@@ -79,6 +79,9 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS os_holds TEXT[] NOT NULL DEFAULT '{}'
 -- The agent's files as one id (agents from 0.3.0 report it); compared with the server's
 -- to tell an outdated agent. NULL: an older agent, which can't update itself.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_bundle TEXT;
+-- The HTTPS public-key pin this agent last enrolled, connected or acknowledged with.
+-- NULL: not recorded (an older agent, or FleetWright isn't serving HTTPS itself).
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS agent_tls_pin TEXT;
 -- The hostname the machine reports (the host's name in FleetWright can be changed);
 -- one of the ways a reinstall is told from a cloned machine.
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS hostname TEXT;
